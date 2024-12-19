@@ -10,7 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description='Derive the intra-axonal, extra-axonal and free water contrast '
                                                  'given an image of gaussian fractions')
     parser.add_argument('input_fractions', type=str, help='The gaussian fractions')
-    parser.add_argument('input_response', type=str, help='The response function')
+    # parser.add_argument('input_response', type=str, help='The response function')
     parser.add_argument('output_dir', type=str, help='The output directory')
     args = parser.parse_args()
 
@@ -18,7 +18,7 @@ def main():
 
     # Your code here
     data = load_mrtrix(args.input_fractions)
-    rf = load_mrtrix(args.input_response).data
+    # rf = load_mrtrix(args.input_response).data
     fractions = data.data
     vox = data.vox
 
