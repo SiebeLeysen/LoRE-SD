@@ -66,7 +66,7 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg, Q=None, lmax=8, cores
     pool.join()
 
     # Initialize arrays for ODFs, responses, and fiber fractions
-    odfs, responses, fs, init_odfs, init_fs = map(np.zeros,
+    odfs, responses, fs = map(np.zeros,
                               [(mask_len, sh.n4l(lmax)), (mask_len, M, lmax // 2 + 1), (mask_len, len(Da), len(Dr))])
     for i, result in enumerate(results):
         odfs[i], responses[i], fs[i] = result['odf'], result['response'], result['gaussian_fractions']
@@ -86,8 +86,7 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg, Q=None, lmax=8, cores
 
     # Print execution time
     print(f'Execution time: {time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start_time))}')
-    return {'odf': odfs, 'response': responses, 'gaussian_fractions': gaussian_fractions, 
-            'reconstructed': reconstructed, 'rmse': rmse}
+    return {'odf': odfs, 'response': responses, 'gaussian_fractions': gaussian_fractions, 'rmse': rmse}
 
 
 def get_transformation_matrix(num_dirs, lmax):
