@@ -98,7 +98,6 @@ def main():
     parser.add_argument('--bvecs', help='Path to the bvecs file', default=None)
     parser.add_argument('--bvals', help='Path to the bvals file', default=None)
     parser.add_argument('--mask', help='Path to the mask file', default=None)
-    parser.add_argument('--high_res_data', help='Path to the high resolution data', default=None)
     parser.add_argument('--eval_matrix', help='Path to the evaluation matrix', default=None)
     parser.add_argument('--slice', help='Slice number to process', type=int, default=None)
 
