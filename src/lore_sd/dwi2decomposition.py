@@ -67,7 +67,7 @@ def prepare_parameters(grid_size):
 
 def save_outputs(args, data_dict, vox, grad):
     for file_name, data in data_dict.items():
-        if file_name == 'reconstructed.mif':
+        if file_name == 'predicted_signal.mif':
             save_mrtrix(os.path.join(args.output_dir, file_name), Image(data, grad=grad, vox=vox, comments=f'{file_name.split(".")[0].replace("_", " ").title()} by LoRE-SD'))
         else:
             save_mrtrix(os.path.join(args.output_dir, file_name), Image(data, vox=vox, comments=f'{file_name.split(".")[0].replace("_", " ").title()} by LoRE-SD'))
@@ -139,7 +139,7 @@ def main():
         'odf.mif': out['odf'],
         'response.mif': out['response'],
         'gaussian_fractions.mif': out['gaussian_fractions'],
-        'reconstructed.mif': out['reconstructed'],
+        'predicted_signal.mif': out['reconstructed'],
         'rmse.mif': out['rmse']
     }
 
