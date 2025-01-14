@@ -139,7 +139,7 @@ def main():
         'odf.mif': out['odf'],
         'response.mif': out['response'],
         'gaussian_fractions.mif': out['gaussian_fractions'],
-        'predicted_signal.mif': out['reconstructed'],
+        'predicted_signal.mif': out['predicted_signal'],
         'rmse.mif': out['rmse']
     }
 
