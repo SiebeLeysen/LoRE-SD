@@ -86,7 +86,7 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg, Q=None, lmax=8, cores
 
     # Print execution time
     print(f'Execution time: {time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start_time))}')
-    return {'odf': odfs, 'response': responses, 'gaussian_fractions': gaussian_fractions, 'rmse': rmse}
+    return {'odf': odfs, 'response': responses, 'gaussian_fractions': gaussian_fractions, 'rmse': rmse, 'predicted_signal': reconstructed}
 
 
 def get_transformation_matrix(num_dirs, lmax):
