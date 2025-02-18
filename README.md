@@ -15,7 +15,7 @@ The response function representation is used to generate scalar image maps mimic
 
 In summary, LoRE-SD offers a framework for estimating data-driven, local response functions, enabling accurate glioma modelling and the development of new image contrasts.
 
-This code makes use of MRtrix3 commands. Make sure you have a working installation installed and have added the binaries to your PATH.
+> This code makes use of MRtrix3 commands. Make sure you have a working installation installed and have added the binaries to your PATH such that LoRE-SD can access them.
 
 ## Usage
 1. Clone the repo and run `make install` to install required dependencies and add some useful commands to the path. If you do not want to add console scripts to your path, run `pip install -e .`.
