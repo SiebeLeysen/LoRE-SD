@@ -14,7 +14,7 @@ from lore_sd.utils import io_utils, math_utils, gradient_utils
 import subprocess
 import tqdm
 
-def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, cores=50):
+def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, cores=50, verbose=True):
     """
     Perform blind deconvolution on diffusion-weighted imaging (DWI) data.
 
@@ -58,12 +58,13 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, 
         mp.set_start_method('spawn')
     except RuntimeError:
         pass
-    pool = mp.Pool(cores)
 
-    results = pool.starmap(decompose_voxel, tqdm.tqdm(args, total=len(args)), chunksize=1)
-
-    pool.close()
-    pool.join()
+    if verbose:
+        with mp.Pool(cores) as pool:
+            results = pool.starmap(decompose_voxel, tqdm.tqdm(args, total=len(args)), chunksize=1)
+    else:
+        with mp.Pool(cores) as pool:
+            results = pool.starmap(decompose_voxel, args, chunksize=1)
 
     # Initialize arrays for ODFs, responses, and fiber fractions
     odfs, init_odfs, responses, fs = map(np.zeros,
@@ -86,7 +87,8 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, 
     rmse *= mask
 
     # Print execution time
-    print(f'Execution time: {time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start_time))}')
+    if verbose:
+        print(f'Execution time: {time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start_time))}')
     return {'odf': odfs, 'response': responses, 'gaussian_fractions': gaussian_fractions, 'rmse': rmse, 'predicted_signal': reconstructed, 'init_odf': init_odfs}
 
 
