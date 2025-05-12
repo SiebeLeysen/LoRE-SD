@@ -31,8 +31,7 @@ def handle_input(args):
     - AssertionError: If the input image is not in '.mif' format and either bvecs or bvals files are not provided.
     """
     if not args.input.endswith('.mif'):
-        assert args.bvecs is not None and args.bvals is not None, 'bvecs and bvals files are required for conversion.'
-        return convert_to_mif(args.input, args.bvecs, args.bvals)
+        raise Exception('Input file should be in MRtrix3 format (.mif)')
     else:
         return load_mrtrix(args.input)
 
@@ -73,14 +72,6 @@ def save_outputs(args, data_dict, vox, grad):
         else:
             save_mrtrix(os.path.join(args.output_dir, file_name), Image(data, vox=vox, comments=f'{file_name.split(".")[0].replace("_", " ").title()} by LoRE-SD'))
 
-
-def convert_to_mif(nii_path, bvecs_path, bvals_path):
-    cmd_nii_to_img = f'mrconvert {nii_path} {nii_path.replace(".nii.gz", ".mif")} -fslgrad {bvecs_path} {bvals_path} -quiet'
-    subprocess.run(cmd_nii_to_img.split(' '))
-    out = load_mrtrix(nii_path.replace('.nii.gz', '.mif'))
-    subprocess.run(f'rm {nii_path.replace(".nii.gz", ".mif")}'.split(' '))
-    return out
-
 def get_mask(input_image, cores):
     subprocess.run(['dwi2mask', input_image, 'tmp_mask.mif', '-nthreads', str(cores)])
     mask = load_mrtrix('tmp_mask.mif').data > .5
@@ -96,8 +87,6 @@ def main():
     parser.add_argument('--grid_size', help='Grid size (Number of linearly spaced values for AD and RD)', type=int,
                         default=10)
     parser.add_argument('--cores', help='Number of cores to use', type=int, default=1)
-    parser.add_argument('--bvecs', help='Path to the bvecs file', default=None)
-    parser.add_argument('--bvals', help='Path to the bvals file', default=None)
     parser.add_argument('--mask', help='Path to the mask file', default=None)
     parser.add_argument('--eval_matrix', help='Path to the evaluation matrix', default=None)
     parser.add_argument('--slice', help='Slice number to process', type=int, default=None)
@@ -118,10 +107,10 @@ def main():
         Q = np.load(args.eval_matrix)
     else:
         Q = optimise.get_transformation_matrix(300, 8)
-        # save the data
-        # np.save(os.path.join(args.output_dir, 'eval_matrix.npy'), Q)
 
     dwi = input_args.data
+
+    # Single slice processing
     if args.slice is not None:
         dwi = dwi[:,:,args.slice:args.slice+1]
         mask = mask[:,:,args.slice:args.slice+1]
