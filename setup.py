@@ -19,6 +19,8 @@ setup(
             'lore_dwi2decomposition=lore_sd.dwi2decomposition:main',
             'lore_angular_correlation=lore_sd.angular_correlation:main',
             'lore_decomposition2contrast=lore_sd.decomposition2contrast:main',
+            'lore_learn_contrast=lore_sd.learn_contrast:main',
+            'lore_apply_contrast=lore_sd.apply_contrast:main',
         ],
     },
     author='Siebe Leysen',
