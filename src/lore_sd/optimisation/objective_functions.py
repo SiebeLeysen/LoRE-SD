@@ -81,20 +81,33 @@ def jac_data_fidelity_with_kernel_regularisation(d, S, gaussians, reg_param):
     
     grad = np.zeros_like(d)
     
-    # Compute grad[:nlmax]
-    for i in range(nlmax):
-        numba.numba_print((-2 * np.sum(differences * kernel[:,i], axis=0)).shape)
-        grad[i] = -2 * np.sum(differences * kernel[:,i], axis=0)
-    
-    # Compute grad[nlmax:]
-    for i in range(fs.shape[0]):
-        grad[nlmax + i] = -2 * np.sum(differences * gaussians[i] * odf, axis=(0, 1))
-    
+    # Compute grad[:nlmax] (derivative w.r.t. odf components)
+    # tmp_b = sum_a differences[a,b] * kernel[a,b]
+    for b in range(nlmax):
+        s = 0.0
+        for a in range(kernel.shape[0]):
+            s += differences[a, b] * kernel[a, b]
+        grad[b] = -2.0 * s
+
+    # Compute grad[nlmax:] (derivative w.r.t. fs components)
+    n_fs = fs.shape[0]
+    for k in range(n_fs):
+        s = 0.0
+        # sum over a,b of differences[a,b] * gaussians[k,a,b] * odf[b]
+        for a in range(kernel.shape[0]):
+            for b in range(kernel.shape[1]):
+                s += differences[a, b] * gaussians[k, a, b] * odf[b]
+        grad[nlmax + k] = -2.0 * s
+
     # Add regularization term to grad[nlmax:]
-    for i in range(1, kernel.shape[0]):
-        for j in range(1, kernel.shape[1]):
-            grad[nlmax:] += reg_param * 2 * kernel[i, j] * gaussians[:, i, j]
-    
+    # reg contribution for each fs k: 2 * reg_param * sum_{i>=1,j>=1} kernel[i,j] * gaussians[k,i,j]
+    for k in range(n_fs):
+        r = 0.0
+        for i in range(1, kernel.shape[0]):
+            for j in range(1, kernel.shape[1]):
+                r += kernel[i, j] * gaussians[k, i, j]
+        grad[nlmax + k] += 2.0 * reg_param * r
+
     return 1e-5 * grad
 
 def csd_fit(odf, S, rf):
