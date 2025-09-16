@@ -11,6 +11,7 @@ setup(
         'matplotlib',
         'seaborn',
         'pandas',
+        'numba',
         # Add other dependencies here
     ],
     entry_points={
