@@ -3,6 +3,7 @@ import numpy as np
 import os
 import sys
 import subprocess
+import numba
 
 # sys.path.append('/home/sleyse4/repos/LoRE_SD/LoRE-SD/src')
 # sys.path.append('/home/sleyse4/repos/LoRE_SD/LoRE-SD')
