@@ -115,7 +115,12 @@ def main():
 
     if args.eval_matrix is not None:
         # load the data in np format
-        Q = np.load(args.eval_matrix)
+        if args.eval_matrix.endswith('.npy'):
+            Q = np.load(args.eval_matrix)
+        elif args.eval_matrix.endswith('.txt'):
+            Q = np.loadtxt(args.eval_matrix)
+        else:
+            raise ValueError('Unsupported file format for evaluation matrix. Please provide a .npy or .txt file.')
     else:
         Q = optimise.get_transformation_matrix(300, 8)
         # save the data
@@ -142,7 +147,9 @@ def main():
         'gaussian_fractions.mif': out['gaussian_fractions'],
         'predicted_signal.mif': out['predicted_signal'],
         'rmse.mif': out['rmse'],
-        'init_odf.mif': out['init_odf']
+        'init_odf.mif': out['init_odf'],
+        'init_obj.mif': out['init_obj'],
+        'final_obj.mif': out['final_obj'],
     }
 
     save_outputs(args, save_dict, vox, grad)
