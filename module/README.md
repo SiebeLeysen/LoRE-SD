@@ -1,10 +1,10 @@
 # LoRE-SD MRtrix external module
 
-LoRE-SD is a diffusion MRI fibre-response decomposition method that estimates:
+LoRE-SD is a diffusion MRI spherical deconvolution method that estimates:
 
-- a spherical harmonic ODF,
+- a local spherical harmonic ODF,
 - a grid of Gaussian fraction weights over axial/radial diffusivities, and
-- a per-shell response function.
+- a local, per-voxel response function.
 
 This module packages LoRE-SD as an MRtrix external module with two commands:
 
@@ -22,8 +22,22 @@ This module packages LoRE-SD as an MRtrix external module with two commands:
 
 This module is built using the MRtrix build script.
 
-1. Make sure NLopt is installed on your system.
-2. Ensure the MRtrix build configuration for this module includes the NLopt include and link flags.
+This module depends on the nlopt library for nonlinear optimization.
+To build this module with NLopt, the NLopt library must be available and linked in the MRtrix configuration file, typically named `config` in the MRtrix repository.
+Add the following lines: 
+
+```
+cpp_flags += [
+    '-I/path/to/nlopt/include'
+]
+
+ld_flags += [
+    '-L/path/to/nlopt/lib',
+    '-lnlopt',
+    '-Wl,-rpath,/path/to/nlopt/lib'
+]
+```
+
 
 From the repository root, create a symbolic link to the MRtrix build script if one is not already present, then run it:
 
