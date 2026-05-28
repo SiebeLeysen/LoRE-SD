@@ -42,7 +42,6 @@ void usage()
     +DWI::GradImportOptions() + DWI::ShellsOption 
     + Option("mask", "only perform computation within the specified binary brain mask image")
      + Argument("image").type_image_in()
-    + Option("python_shells", "use Python-style shells by rounding b-values to nearest 100")
     + Option("lmax", "maximum spherical harmonic order (default: 8)")
      + Argument("order").type_integer(8)
     + Option("grid_size", "grid size for Da/Dr (default: 7)")
@@ -285,35 +284,16 @@ void run()
 
     std::vector<double> bvals;
     std::vector<std::vector<size_t>> shell_volumes;
-    opt = get_options("python_shells");
-    if (opt.size())
+    
+    DWI::Shells shells(grad);
+    bvals.reserve(shells.count());
+    shell_volumes.reserve(shells.count());
+    for (size_t i = 0; i < shells.count(); ++i)
     {
-        std::map<int, std::vector<size_t>> grouped;
-        for (int i = 0; i < grad.rows(); ++i)
-        {
-            const double b = grad(i, 3);
-            const int b_round = static_cast<int>(std::llround(b / 100.0)) * 100;
-            grouped[b_round].push_back(static_cast<size_t>(i));
-        }
-        bvals.reserve(grouped.size());
-        shell_volumes.reserve(grouped.size());
-        for (const auto &entry : grouped)
-        {
-            bvals.push_back(static_cast<double>(entry.first));
-            shell_volumes.push_back(entry.second);
-        }
+        bvals.push_back(shells[i].get_mean());
+        shell_volumes.push_back(shells[i].get_volumes());
     }
-    else
-    {
-        DWI::Shells shells(grad);
-        bvals.reserve(shells.count());
-        shell_volumes.reserve(shells.count());
-        for (size_t i = 0; i < shells.count(); ++i)
-        {
-            bvals.push_back(shells[i].get_mean());
-            shell_volumes.push_back(shells[i].get_volumes());
-        }
-    }
+        
 
     auto params = LoreSD::make_params(lmax, grid_size, reg, grad, eval_dirs, bvals, shell_volumes);
     // ALS removed; no als_iters parameter
