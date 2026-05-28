@@ -434,44 +434,6 @@ namespace LoreSD
               return kScale * cost;
     }
 
-    double csd_objective(const std::vector<double> &x, std::vector<double> &grad, void *data)
-    {
-      constexpr double kObjectiveScale = 1e-4;
-      auto *d = reinterpret_cast<CSDData *>(data);
-      Eigen::Map<const Eigen::VectorXd> odf(x.data(), d->n_sh);
-      Eigen::MatrixXd convolved = d->rf.array().rowwise() * odf.transpose().array();
-      Eigen::MatrixXd diff = d->S - convolved;
-      double cost = diff.squaredNorm();
-      if (!grad.empty())
-      {
-        Eigen::VectorXd grad_vec = -2.0 * (diff.array() * d->rf.array()).colwise().sum().transpose();
-        grad_vec *= kObjectiveScale;
-        for (int i = 0; i < grad_vec.size(); ++i)
-          grad[i] = grad_vec[i];
-      }
-      return kObjectiveScale * cost;
-    }
-
-    void non_negative_odf_constraint_csd(unsigned m, double *result, unsigned n, const double *x, double *grad, void *data)
-    {
-      auto *d = reinterpret_cast<CSDData *>(data);
-      for (int i = 0; i < d->Q.rows(); ++i)
-      {
-        result[i] = -d->Q.row(i).dot(Eigen::Map<const Eigen::VectorXd>(x, d->n_sh));
-      }
-      if (grad)
-      {
-        for (unsigned i = 0; i < m * n; ++i)
-          grad[i] = 0.0;
-        for (int i = 0; i < d->Q.rows(); ++i)
-        {
-          for (int j = 0; j < d->n_sh; ++j)
-            grad[i * n + j] = -d->Q(i, j);
-        }
-      }
-    }
-
-
     struct Workspace
     {
       bool initialized = false;
