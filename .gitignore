@@ -5,6 +5,16 @@ __pycache__/
 *.so
 *.dylib
 *.egg-info/
+build/
+dist/
+.idea/
 .env
 .vscode
 venv/
+.venv/
+.ipynb_checkpoints/
+.DS_Store
+*.log
+*.tmp
+tmp/
+temp/

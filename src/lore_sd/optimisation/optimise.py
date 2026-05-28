@@ -14,7 +14,7 @@ from lore_sd.utils import io_utils, math_utils, gradient_utils
 import subprocess
 import tqdm
 
-def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, cores=50):
+def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, cores=50, verbose=True):
     """
     Perform blind deconvolution on diffusion-weighted imaging (DWI) data.
 
@@ -58,19 +58,23 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, 
         mp.set_start_method('spawn')
     except RuntimeError:
         pass
-    pool = mp.Pool(cores)
 
-    results = pool.starmap(decompose_voxel, tqdm.tqdm(args, total=len(args)), chunksize=1)
-
-    pool.close()
-    pool.join()
+    if verbose:
+        with mp.Pool(cores) as pool:
+            results = pool.starmap(decompose_voxel, tqdm.tqdm(args, total=len(args)), chunksize=1)
+    else:
+        with mp.Pool(cores) as pool:
+            results = pool.starmap(decompose_voxel, args, chunksize=1)
 
     # Initialize arrays for ODFs, responses, and fiber fractions
     odfs, init_odfs, responses, fs = map(np.zeros,
                               [(mask_len, sh.n4l(lmax)), (mask_len, sh.n4l(lmax)), (mask_len, M, lmax // 2 + 1), (mask_len, len(Da), len(Dr))])
+    init_objs = np.zeros(mask_len)
+    final_objs = np.zeros(mask_len)
     for i, result in enumerate(results):
         odfs[i], init_odfs[i], responses[i], fs[i] = result['odf'], result['init_odf'], result['response'], result['gaussian_fractions']
-
+        init_objs[i] = result['init_obj']
+        final_objs[i] = result['final_obj']
     # Simplified version of creating output arrays with the correct shape
     shapes = [
         mask.shape + (sh.n4l(lmax),),
@@ -80,14 +84,20 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, 
     ]
 
     odfs, init_odfs, responses, gaussian_fractions = [math_utils.create_output_array(data, mask, shape) for data, shape in zip((odfs, init_odfs, responses, fs), shapes)]
+    init_objs = math_utils.create_output_array(init_objs, mask, mask.shape)
+    final_objs = math_utils.create_output_array(final_objs, mask, mask.shape)
 
     reconstructed = sh.calcdwi(sh.sphconv(responses, odfs), grad)
     rmse = np.linalg.norm(reconstructed - dwi, axis=-1) / np.sqrt(dwi.shape[-1])
     rmse *= mask
 
     # Print execution time
-    print(f'Execution time: {time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start_time))}')
-    return {'odf': odfs, 'response': responses, 'gaussian_fractions': gaussian_fractions, 'rmse': rmse, 'predicted_signal': reconstructed, 'init_odf': init_odfs}
+    if verbose:
+        print(f'Execution time: {time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start_time))}')
+    return {'odf': odfs, 'response': responses, 
+            'gaussian_fractions': gaussian_fractions, 'rmse': rmse, 
+            'predicted_signal': reconstructed, 'init_odf': init_odfs, 
+            'init_obj': init_objs, 'final_obj': final_objs}
 
 
 def get_transformation_matrix(num_dirs, lmax):
@@ -155,16 +165,21 @@ def decompose_voxel(voxel, Da, Dr, grad, lmax, reg, Q, obj_fun, jac):
     # Simplify initial guess and bounds preparation
     init, bounds = get_init_and_bounds_from_csd(lmax, Da, Dr, gaussians, S, [constraints.non_negative_odf(Q)])
 
+
     res = minimize(obj_fun, init, jac=jac, bounds=bounds, args= (S, gaussians, reg),
                     constraints=[constraints.non_negative_odf(Q), constraints.sum_of_fractions_equals_one(lmax)],
-                    method='SLSQP', options={'ftol':1e-6, 'maxiter': 100000})
+                    method='SLSQP', options={'ftol':1e-4, 'maxiter': 100000})
     odf = res.x[:sh.n4l(lmax)]
     fs = res.x[sh.n4l(lmax):]
 
+    # print(f'Init objective: {obj_fun(init, S, gaussians, reg):.4e}, Final objective: {res.fun:.4e}, Success: {res.success}, Message: {res.message}')
     response = to_response(fs, gaussians) / scale_factor
 
+    init_obj = obj_fun(init, S, gaussians, reg)
+    final_obj = res.fun
+
     return {'odf': odf, 'response': response, 'gaussian_fractions': np.squeeze(fs.reshape((len(Da), len(Dr)))),
-            'init_odf': init[:sh.n4l(lmax)], 'init_fs': init[sh.n4l(lmax):].reshape((len(Da), len(Dr)))}
+            'init_odf': init[:sh.n4l(lmax)], 'init_fs': init[sh.n4l(lmax):].reshape((len(Da), len(Dr))), 'init_obj': init_obj, 'final_obj': final_obj}
 
 def get_init_and_bounds_from_csd(lmax, Da, Dr, scaled_gaussians, S, constraint_funs):
     """
@@ -231,7 +246,7 @@ def get_gaussians(Da, Dr, bvals, lmax):
 
     for ir, r in enumerate(Dr):
         for ia, a in enumerate(Da):
-            if a >= r:
+            if a >= r and a >= 0:
                 gaussians[ia, ir] = sh.zhgaussian(bvals, a, r, lmax)
 
     return gaussians.reshape((-1, len(bvals), lmax // 2 + 1))
