@@ -1,10 +1,10 @@
 # LoRE-SD MRtrix external module
 
-LoRE-SD is a diffusion MRI fibre-response decomposition method that estimates:
+LoRE-SD is a diffusion MRI spherical deconvolution method that estimates:
 
-- a spherical harmonic ODF,
+- a local spherical harmonic ODF,
 - a grid of Gaussian fraction weights over axial/radial diffusivities, and
-- a per-shell response function.
+- a local, per-voxel response function.
 
 This module packages LoRE-SD as an MRtrix external module with two commands:
 
