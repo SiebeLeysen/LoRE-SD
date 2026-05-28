@@ -25,10 +25,19 @@ This module is built using the MRtrix build script.
 This module depends on the nlopt library for nonlinear optimization.
 To build this module with NLopt, the NLopt library must be available and linked in the MRtrix configuration file, typically named `config` in the MRtrix repository.
 Add the following lines: 
+
 ```
-LDLIB += -L/path/to/nlopt/lib -lnlopt
-LDFLAGS += -Wl,-rpath,/path/to/nlopt/lib
+cpp_flags += [
+    '-I/path/to/nlopt/include'
+]
+
+ld_flags += [
+    '-L/path/to/nlopt/lib',
+    '-lnlopt',
+    '-Wl,-rpath,/path/to/nlopt/lib'
+]
 ```
+
 
 From the repository root, create a symbolic link to the MRtrix build script if one is not already present, then run it:
 
