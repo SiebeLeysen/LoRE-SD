@@ -1,84 +1,127 @@
 # LoRE-SD MRtrix external module
 
-LoRE-SD is a diffusion MRI fibre response decomposition method that estimates:
+LoRE-SD is a diffusion MRI fibre-response decomposition method that estimates:
 
 - a spherical harmonic ODF,
-- a grid of Gaussian fraction weights, and
+- a grid of Gaussian fraction weights over axial/radial diffusivities, and
 - a per-shell response function.
 
-This repository packages the implementation as an MRtrix external module with a single command:
+This module packages LoRE-SD as an MRtrix external module with two commands:
 
-- `dwi2fod_lore_sd`
+- lore_dwi2fod: fit ODFs, fractions, and response functions from DWI
+- lore_fractions2contrasts: map the fitted fractions to biologically motivated contrasts
 
 ## Repository layout
 
-- `cmd/dwi2fod_lore_sd.cpp` — MRtrix command-line wrapper
-- `src/lore_sd/lore_sd.cpp` — core fitting and model construction
-- `src/lore_sd/lore_sd.h` — public API for the fitter
+- [cmd/lore_dwi2fod.cpp](cmd/lore_dwi2fod.cpp) — LoRE-SD fitting command
+- [cmd/lore_fractions2contrasts.cpp](cmd/lore_fractions2contrasts.cpp) — contrast mapping command
+- [src/lore_sd/lore_sd.cpp](src/lore_sd/lore_sd.cpp) — core fitting and model construction
+- [src/lore_sd/lore_sd.h](src/lore_sd/lore_sd.h) — public API for the fitter
 
 ## Build
 
 This module is built using the MRtrix build script.
 
 1. Make sure NLopt is installed on your system.
-2. Add NLopt to the MRtrix build configuration used by this module:
-  - `cpp_flags` should include the NLopt include flags
-  - `ld_flags` should include the NLopt link flags as well
+2. Ensure the MRtrix build configuration for this module includes the NLopt include and link flags.
 
-From the repository root, create a symbolic link to the MRtrix `build` script if one is not already present, then run it:
+From the repository root, create a symbolic link to the MRtrix build script if one is not already present, then run it:
 
 ```bash
 ln -s /path/to/mrtrix3/build build
 ./build
 ```
 
-This builds the `dwi2fod_lore_sd` command using the MRtrix build system.
-
 ## Usage
+
+### 1) Fit LoRE-SD from DWI
 
 Basic example:
 
 ```bash
-dwi2fod_lore_sd dwi.mif odf.mif fracs.mif response.mif \
-  -nthreads N
+lore_dwi2fod dwi.mif odf.mif fracs.mif response.mif \
+  -mask mask.mif \
+  -lmax 8 \
+  -grid_size 10 \
+  -reg 1e-3 \
+  -python_shells \
+  -directions eval_dirs.txt \
+  -init_obj_fun init_obj.mif \
+  -final_obj_fun final_obj.mif
 ```
 
 ### Inputs
 
-- `dwi.mif`: diffusion-weighted input image
-- optional mask image via `-mask`
-- optional non-negativity directions via `-directions`
+- DWI image in MRtrix format
+- optional mask via -mask
+- optional evaluation directions via -directions
+- optional shell grouping via -python_shells
 
 ### Outputs
 
-- `odf.mif`: output ODF coefficients
-- `fracs.mif`: Gaussian fraction grid
-- `response.mif`: per-shell response function
-- optional `--init_obj_fun <image>`: objective value before optimization (QC)
-- optional `--final_obj_fun <image>`: objective value after optimization (QC)
+- odf.mif: spherical harmonic ODF coefficients
+- fracs.mif: Gaussian fraction grid with shape (ad, rd)
+- response.mif: per-shell response function in SH form
+- init_obj.mif: initial objective value per voxel
+- final_obj.mif: final objective value per voxel
 
-## Main options
+### Main options
 
-- `-lmax <int>`: spherical harmonic order, default `8`
-- `-grid_size <int>`: Da/Dr grid size, default `7`
-- `-reg <float>`: regularisation strength, default `1e-3`
-- `-maxeval <int>`: maximum iterations for the main optimizer, default `400`
-- `-python_shells`: group shells by rounding b-values to the nearest 100
+- -lmax <int>: spherical harmonic order, default 8
+- -grid_size <int>: Da/Dr grid size, default 10
+- -reg <float>: regularisation strength, default 1e-3
+- -maxeval <int>: maximum iterations for the main optimizer, default 400
+- -python_shells: group shells by rounding b-values to the nearest 100
+- -directions <file>: azimuth/elevation directions used for non-negativity constraints
+- -init_obj_fun <image>: write initial objective values per voxel
+- -final_obj_fun <image>: write final objective values per voxel
+
+### 2) Generate contrasts from fractions
+
+The contrast command converts the 5D fractions image into scalar maps that summarize different tissue regimes:
+
+- intra-axonal contrast
+- extra-axonal contrast
+- free-water contrast
+- RFA map
+
+Example:
+
+```bash
+lore_fractions2contrasts fracs.mif \
+  -intra_axonal intra.mif \
+  -extra_axonal extra.mif \
+  -free_water free.mif \
+  -rfa rfa.mif
+```
+
+Useful options:
+
+- -rate <int>: decay rate used for the intra-axonal weighting, default 10
+- -with_isotropic: include the isotropic line ad == rd in the valid region
+
+## Contrast generation details
+
+The contrast mapping command interprets the fractions image as a grid over axial diffusivity (ad) and radial diffusivity (rd). It then computes:
+
+- free-water: a binary mask over high-diffusivity combinations,
+- intra-axonal: a decaying weighting over the valid ad >= rd region,
+- extra-axonal: the complement of free-water and intra-axonal contributions,
+- RFA: an anisotropy-style scalar derived from ad/rd.
 
 ## Implementation notes
 
-- The code uses MRtrix shell handling and spherical harmonic helpers.
 - The ODF DC term is fixed to the isotropic value.
-- The ODF can be modulated by constrasts derived from the Gaussian fractions
+- Shell-wise SH fits are used to build the initial response estimate.
+- Gaussian basis ordering is Da-major, then Dr-major, matching the Python implementation.
+- Objective values can be exported per voxel for QC.
 
 ## Example workflow
 
-A typical workflow is:
-
 1. Build the module.
-2. Run `dwi2fod_lore_sd` with a brain mask.
-3. Inspect `odf.mif`, `fracs.mif`, and `response.mif` in an MRtrix viewer.
-4. Optionally export `--init_obj_fun` and `--final_obj_fun` for quality checks.
+2. Run lore_dwi2fod with a brain mask.
+3. Inspect odf.mif, fracs.mif, response.mif, and optional objective images.
+4. Run lore_fractions2contrasts to generate contrast maps from the fractions volume.
 
 ## License
 
