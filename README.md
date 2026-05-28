@@ -1,6 +1,7 @@
 # LoRE-SD: Local Response function Estimation in Spherical Deconvolution
 
-** Check the README.md in the module folder for instructions on setting up the MRtrix external module **
+> [!TIP]
+> Check the README.md in the module folder for instructions on setting up the MRtrix external module
 
 **LoRE-SD** is a novel diffusion MRI modelling technique making minimal assumptions on tissue microstructure. It is based on the spherical deconvolution paradigm in which the diffusion signal is decomposed as the spherical convolution of a response function $R$ and and ODF $F$.
 
