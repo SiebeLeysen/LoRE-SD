@@ -701,11 +701,10 @@ namespace LoreSD
 
     std::vector<double> odf_init(ws.x0.begin(), ws.x0.begin() + n_sh);
     const Eigen::VectorXd odf_init_before = Eigen::Map<const Eigen::VectorXd>(odf_init.data(), n_sh);
-    nlopt::result csd_status = nlopt::FAILURE;
+
     try
     {
       solve_odf_icls(ws.rf, ws.S, ws.x0, params, ws.n_sh, ws.n_shells);
-      csd_status = nlopt::SUCCESS;
     }
     catch (const std::exception &)
     {
