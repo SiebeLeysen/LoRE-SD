@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <chrono>
+#include <sstream>
 
 #include "command.h"
 #include "header.h"
@@ -41,8 +42,6 @@ void usage()
     +DWI::GradImportOptions() + DWI::ShellsOption 
     + Option("mask", "only perform computation within the specified binary brain mask image")
      + Argument("image").type_image_in()
-    + Option("directions", "directions to enforce non-negativity (text file with azimuth/elevation columns)")
-     + Argument("file").type_file_in()
     + Option("python_shells", "use Python-style shells by rounding b-values to nearest 100")
     + Option("lmax", "maximum spherical harmonic order (default: 8)")
      + Argument("order").type_integer(8)
@@ -187,11 +186,50 @@ private:
     }
 };
 
+static Eigen::MatrixXd load_default_eval_dirs()
+{
+    const std::string source_path = __FILE__;
+    const auto slash = source_path.find_last_of('/');
+    if (slash == std::string::npos)
+        throw Exception("Unable to determine module directory from source path");
+
+    const std::string path = source_path.substr(0, slash + 1) + "../dirs.txt";
+    std::ifstream in(path.c_str());
+    if (!in)
+        throw Exception("Unable to open default directions file: " + path);
+
+    std::vector<double> values;
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.empty() || line[0] == '#')
+            continue;
+        std::istringstream iss(line);
+        double az = 0.0, el = 0.0;
+        if (!(iss >> az >> el))
+            continue;
+        values.push_back(az);
+        values.push_back(el);
+    }
+
+    if (values.empty() || values.size() % 2)
+        throw Exception("Default directions file must contain azimuth/elevation pairs");
+
+    const size_t rows = values.size() / 2;
+    Eigen::MatrixXd eval_dirs(rows, 2);
+    for (size_t i = 0; i < rows; ++i)
+    {
+        eval_dirs(i, 0) = values[2 * i];
+        eval_dirs(i, 1) = values[2 * i + 1];
+    }
+    return eval_dirs;
+}
+
 void run()
 {
     auto header_in = Header::open(argument[0]);
     auto grad = DWI::get_DW_scheme(header_in);
-    Eigen::MatrixXd eval_dirs;
+    const Eigen::MatrixXd eval_dirs = load_default_eval_dirs();
 
     auto mask = Image<bool>();
     auto opt = get_options("mask");
@@ -210,7 +248,7 @@ void run()
             throw Exception("lmax must be an even number");
     }
 
-    int grid_size = 10;
+    int grid_size = 7;
     opt = get_options("grid_size");
     if (opt.size())
         grid_size = to<int>(opt[0][0]);
@@ -220,9 +258,7 @@ void run()
     if (opt.size())
         reg = to<double>(opt[0][0]);
 
-    // ALS removed; no parsing for als_iters
-
-    int maxeval = 50;
+    int maxeval = 400;
     opt = get_options("maxeval");
     if (opt.size())
         maxeval = to<int>(opt[0][0]);
@@ -246,28 +282,6 @@ void run()
     }
 
     // profiling removed in public release
-
-    opt = get_options("directions");
-    if (opt.size())
-    {
-        const auto path = std::string(opt[0][0]);
-        std::ifstream in(path.c_str());
-        if (!in)
-            throw Exception("Unable to open directions file: " + path);
-        std::vector<double> values;
-        double v = 0.0;
-        while (in >> v)
-            values.push_back(v);
-        if (values.size() % 2)
-            throw Exception("Directions file must contain pairs of azimuth/elevation values");
-        const size_t rows = values.size() / 2;
-        eval_dirs.resize(rows, 2);
-        for (size_t i = 0; i < rows; ++i)
-        {
-            eval_dirs(i, 0) = values[2 * i];
-            eval_dirs(i, 1) = values[2 * i + 1];
-        }
-    }
 
     std::vector<double> bvals;
     std::vector<std::vector<size_t>> shell_volumes;
