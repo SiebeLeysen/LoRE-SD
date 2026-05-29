@@ -4,12 +4,7 @@
  */
 
 #include <cmath>
-#include <fstream>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <chrono>
-#include <sstream>
+
 
 #include "command.h"
 #include "header.h"
@@ -17,6 +12,7 @@
 #include "algo/threaded_loop.h"
 #include "dwi/gradient.h"
 #include "dwi/shells.h"
+#include "dwi/directions/predefined.h"
 #include "math/SH.h"
 #include "metadata/phase_encoding.h"
 #include "stride.h"
@@ -157,6 +153,9 @@ private:
 
     void write_vector(Image<float> &dwi, Image<float> &image, const std::vector<float> &data, size_t expected)
     {
+        if (!image.valid())
+            return;
+
         assign_pos_of(dwi, 0, 3).to(image);
         size_t idx = 0;
 
@@ -198,41 +197,7 @@ private:
 
 static Eigen::MatrixXd load_default_eval_dirs()
 {
-    const std::string source_path = __FILE__;
-    const auto slash = source_path.find_last_of('/');
-    if (slash == std::string::npos)
-        throw Exception("Unable to determine module directory from source path");
-
-    const std::string path = source_path.substr(0, slash + 1) + "../dirs.txt";
-    std::ifstream in(path.c_str());
-    if (!in)
-        throw Exception("Unable to open default directions file: " + path);
-
-    std::vector<double> values;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.empty() || line[0] == '#')
-            continue;
-        std::istringstream iss(line);
-        double az = 0.0, el = 0.0;
-        if (!(iss >> az >> el))
-            continue;
-        values.push_back(az);
-        values.push_back(el);
-    }
-
-    if (values.empty() || values.size() % 2)
-        throw Exception("Default directions file must contain azimuth/elevation pairs");
-
-    const size_t rows = values.size() / 2;
-    Eigen::MatrixXd eval_dirs(rows, 2);
-    for (size_t i = 0; i < rows; ++i)
-    {
-        eval_dirs(i, 0) = values[2 * i];
-        eval_dirs(i, 1) = values[2 * i + 1];
-    }
-    return eval_dirs;
+    return DWI::Directions::tesselation_469();
 }
 
 void run()

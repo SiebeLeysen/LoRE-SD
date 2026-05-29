@@ -236,8 +236,8 @@ public:
         }
 
         // build ranges
-        auto ad_range = linspace(4e-3, na);
-        auto rd_range = linspace(4e-3, nr);
+        auto ad_range = linspace(3.3e-3, na);
+        auto rd_range = linspace(3.3e-3, nr);
 
         auto intra = intra_axonal_contrast(ad_range, rd_range, with_isotropic, static_cast<double>(rate));
         auto extra = extra_axonal_contrast(ad_range, rd_range, with_isotropic, static_cast<double>(rate));

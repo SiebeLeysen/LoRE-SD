@@ -29,6 +29,8 @@ struct Params {
   std::vector< Eigen::MatrixXd > shell_pinvQ;
   std::vector< std::vector<size_t> > shell_volumes;
   Eigen::MatrixXd Q;
+  // Weight for a soft penalty on sampled ODF negativity. Zero = disabled.
+  double odf_penalty = 0.0;
 };
 
 // Per-voxel outputs returned by the fitter.

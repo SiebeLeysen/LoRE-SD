@@ -294,6 +294,7 @@ namespace LoreSD
             grad[i * n + j] = -d->Q(i, j);
         }
       }
+      
     }
 
     // Main coupled objective over ODF and Gaussian fractions.
@@ -545,7 +546,7 @@ namespace LoreSD
       B(0, 0) = 1.0;
       s[0] = dc;
 
-      auto problem = MR::Math::ICLS::Problem<double>(H, A, B, t, s, 1e-10, 1e-10, 30, 1e-10);
+      auto problem = MR::Math::ICLS::Problem<double>(H, A, B, t, s, 1e-10, 1e-10, 300, 1e-10);
       auto solver = MR::Math::ICLS::Solver<double>(problem);
 
       Eigen::VectorXd odf = Eigen::Map<Eigen::VectorXd>(x0.data(), n_sh);
@@ -577,7 +578,7 @@ namespace LoreSD
     params.da.resize(grid_size);
     params.dr.resize(grid_size);
 
-    const double max_diffusivity = 4e-3;
+    const double max_diffusivity = 3.3e-3;
     if (grid_size <= 1)
     {
       params.da[0] = 0.0;
@@ -713,6 +714,10 @@ namespace LoreSD
     {
     }
     const Eigen::Map<const Eigen::VectorXd> odf_init_after(ws.x0.data(), n_sh);
+
+    ws.x0[0] = dc;
+    for (int g = 0; g < n_gauss; ++g)
+      ws.x0[n_sh + g] =0;
 
     // set up OptData for subsequent steps
     ws.data.S = ws.S;
