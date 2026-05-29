@@ -53,6 +53,8 @@ void usage()
     + Option("init_obj_fun", "write initial objective function per voxel to an output image")
      + Argument("image").type_image_out()
     + Option("final_obj_fun", "write final objective function per voxel to an output image")
+     + Argument("image").type_image_out()
+    + Option("predicted_signal", "write the DWI signal predicted by LoRE-SD to an output image")
      + Argument("image").type_image_out() + Stride::Options;
 }
 
@@ -65,12 +67,14 @@ public:
                      Image<float> &odf,
                      Image<float> &fracs,
                      Image<float> &response,
+                     Image<float> &predicted_signal,
                      Image<float> &init_obj_fun,
                      Image<float> &final_obj_fun) : params(params),
                                                                 mask(mask),
                                                                 odf_image(odf),
                                                                 fracs_image(fracs),
                                                                 response_image(response),
+                                                                predicted_signal_image(predicted_signal),
                                                                 init_obj_fun_image(init_obj_fun),
                                                                 final_obj_fun_image(final_obj_fun),
                                                                 dwi_data(0)
@@ -78,10 +82,13 @@ public:
         n_odf = MR::Math::SH::NforL(params.lmax);
         n_fracs = static_cast<size_t>(params.grid_size * params.grid_size);
         n_response = static_cast<size_t>(params.bvals.size()) * static_cast<size_t>(params.lmax / 2 + 1);
+        n_predicted_signal = 0;
     }
 
     void operator()(Image<float> &dwi)
     {
+        n_predicted_signal = static_cast<size_t>(dwi.size(3));
+
         if (mask.valid())
         {
             assign_pos_of(dwi, 0, 3).to(mask);
@@ -107,6 +114,7 @@ public:
         write_vector(dwi, odf_image, result.odf, n_odf);
         write_vector(dwi, fracs_image, result.fracs, n_fracs);
         write_vector(dwi, response_image, result.response, n_response);
+        write_vector(dwi, predicted_signal_image, result.predicted_signal, n_predicted_signal);
         write_scalar(dwi, init_obj_fun_image, result.f0);
         write_scalar(dwi, final_obj_fun_image, result.f1);
 
@@ -119,12 +127,14 @@ private:
     Image<float> odf_image;
     Image<float> fracs_image;
     Image<float> response_image;
+    Image<float> predicted_signal_image;
     Image<float> init_obj_fun_image;
     Image<float> final_obj_fun_image;
     Eigen::VectorXd dwi_data;
     size_t n_odf = 0;
     size_t n_fracs = 0;
     size_t n_response = 0;
+    size_t n_predicted_signal = 0;
 
     void write_zero_outputs(Image<float> &dwi)
     {
@@ -132,6 +142,7 @@ private:
         write_vector(dwi, odf_image, empty, n_odf);
         write_vector(dwi, fracs_image, empty, n_fracs);
         write_vector(dwi, response_image, empty, n_response);
+        write_vector(dwi, predicted_signal_image, empty, n_predicted_signal);
         write_scalar(dwi, init_obj_fun_image, 0.0f);
         write_scalar(dwi, final_obj_fun_image, 0.0f);
     }
@@ -280,6 +291,15 @@ void run()
         final_obj_fun_path = std::string(opt[0][0]);
     }
 
+    bool have_predicted_signal = false;
+    std::string predicted_signal_path;
+    opt = get_options("predicted_signal");
+    if (opt.size())
+    {
+        have_predicted_signal = true;
+        predicted_signal_path = std::string(opt[0][0]);
+    }
+
     // profiling removed in public release
 
     std::vector<double> bvals;
@@ -347,8 +367,18 @@ void run()
         final_obj_fun = Image<float>::create(path, final_header);
     }
 
+    Image<float> predicted_signal;
+    if (have_predicted_signal)
+    {
+        Header predicted_header(header_in);
+        predicted_header.datatype() = DataType::Float32;
+        predicted_header.datatype().set_byte_order_native();
+        auto path = predicted_signal_path;
+        predicted_signal = Image<float>::create(path, predicted_header);
+    }
+
     auto dwi = header_in.get_image<float>().with_direct_io(3);
-    LoRESD_Processor processor(params, mask, odf, fracs, response, init_obj_fun, final_obj_fun);
+    LoRESD_Processor processor(params, mask, odf, fracs, response, predicted_signal, init_obj_fun, final_obj_fun);
     ThreadedLoop("performing LoRE-SD", dwi, 0, 3).run(processor, dwi);
     
 }
