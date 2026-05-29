@@ -17,7 +17,7 @@ This module packages LoRE-SD as an MRtrix external module with two commands:
 - [cmd/lore_fractions2contrasts.cpp](cmd/lore_fractions2contrasts.cpp) — contrast mapping command
 - [src/lore_sd/lore_sd.cpp](src/lore_sd/lore_sd.cpp) — core fitting and model construction
 - [src/lore_sd/lore_sd.h](src/lore_sd/lore_sd.h) — public API for the fitter
-- [dirs.txt](dirs.txt) — bundled default evaluation directions used for non-negativity constraints
+- MRtrix predefined directions — built-in 300-direction electrostatic repulsion set used for non-negativity constraints
 
 ## Build
 
@@ -88,8 +88,8 @@ lore_dwi2fod dwi.mif odf.mif fracs.mif response.mif \
 - -init_obj_fun <image>: write initial objective values per voxel
 - -final_obj_fun <image>: write final objective values per voxel
 
-The non-negativity constraint directions are always read from the bundled [dirs.txt](dirs.txt) file.
-If you want a different set of directions, replace that file in the module directory.
+The non-negativity constraint directions use the built-in MRtrix predefined 300-direction electrostatic repulsion set.
+If you want a different set of directions, change the predefined set selected in the command wrapper.
 
 ### 2) Generate contrasts from fractions
 
@@ -130,7 +130,7 @@ The contrast mapping command interprets the fractions image as a grid over axial
 - Shell-wise SH fits are used to build the initial response estimate.
 - Gaussian basis ordering is Da-major, then Dr-major, matching the Python implementation.
 - Objective values can be exported per voxel for QC.
-- Non-negativity directions are taken from the bundled dirs.txt file.
+- Non-negativity directions are taken from the MRtrix predefined directions API.
 
 ## Example workflow
 
