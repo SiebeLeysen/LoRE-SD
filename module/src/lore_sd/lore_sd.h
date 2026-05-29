@@ -25,18 +25,20 @@ struct Params {
   std::vector< Eigen::MatrixXd > gaussians_rh;
   std::vector<int> shell_sizes;
   std::vector<int> shell_ncoeff;
+  std::vector< Eigen::MatrixXd > shell_Q;
   std::vector< Eigen::MatrixXd > shell_pinvQ;
   std::vector< std::vector<size_t> > shell_volumes;
   Eigen::MatrixXd Q;
 };
 
 // Per-voxel outputs returned by the fitter.
-// `odf`, `fracs`, and `response` are written directly to MRtrix images.
+// `odf`, `fracs`, `response`, and `predicted_signal` are written directly to MRtrix images.
 // `f0` and `f1` are optional objective values for the initial and final states.
 struct Result {
   std::vector<float> odf;
   std::vector<float> fracs;
   std::vector<float> response;
+  std::vector<float> predicted_signal;
   double f0 = 0.0;
   double f1 = 0.0;
   int status = 0;

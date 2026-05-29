@@ -596,6 +596,7 @@ namespace LoreSD
     const int n_shells = static_cast<int>(shell_volumes.size());
     params.shell_sizes.resize(n_shells);
     params.shell_ncoeff.resize(n_shells);
+    params.shell_Q.resize(n_shells);
     params.shell_pinvQ.resize(n_shells);
     params.shell_volumes = shell_volumes;
 
@@ -622,7 +623,7 @@ namespace LoreSD
           for (int l = 0; l <= lmax; l += 2)
           {
             int ncoeff = n4l(l);
-            if (ncoeff <= static_cast<int>(vols.size()))
+              if (ncoeff < static_cast<int>(vols.size()))
               nn = ncoeff;
           }
         }
@@ -635,6 +636,7 @@ namespace LoreSD
 
       Eigen::MatrixXd Q = MR::Math::SH::init_transform_cart(dirs, lmax);
       Eigen::MatrixXd Qnn = Q.leftCols(nn);
+      params.shell_Q[s] = Qnn;
       params.shell_pinvQ[s] = MR::Math::pinv(Qnn);
     }
 
@@ -658,6 +660,7 @@ namespace LoreSD
     result.odf.assign(n_sh, 0.0f);
     result.fracs.assign(n_gauss, 0.0f);
     result.response.assign(n_shells * (params.lmax / 2 + 1), 0.0f);
+    result.predicted_signal.assign(static_cast<size_t>(dwi.size()), 0.0f);
 
     if (dwi.size() == 0)
       return result;
@@ -748,9 +751,25 @@ namespace LoreSD
 
     Eigen::MatrixXd response = rh2zh(ws.kernel, params.lmax) / scale_factor;
 
+    Eigen::MatrixXd response_rh = zh2rh(response, params.lmax);
+    Eigen::VectorXd predicted = Eigen::VectorXd::Zero(static_cast<int>(dwi.size()));
+    for (int s = 0; s < n_shells; ++s)
+    {
+      const auto &indices = params.shell_volumes[s];
+      const int nn = params.shell_ncoeff[s];
+      if (indices.empty() || nn <= 0)
+        continue;
+
+      Eigen::VectorXd shell_coeffs = response_rh.row(s).transpose().cwiseProduct(odf);
+      Eigen::VectorXd shell_pred = params.shell_Q[s] * shell_coeffs.head(nn);
+      for (size_t i = 0; i < indices.size(); ++i)
+        predicted[static_cast<int>(indices[i])] = shell_pred[static_cast<int>(i)];
+    }
+
     result.odf.assign(odf.data(), odf.data() + odf.size());
     result.fracs.assign(fs.data(), fs.data() + fs.size());
     result.response.assign(response.data(), response.data() + response.size());
+    result.predicted_signal.assign(predicted.data(), predicted.data() + predicted.size());
 
     const bool need_objectives = params.init_obj_fun || params.final_obj_fun;
     if (need_objectives)
