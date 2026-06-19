@@ -20,11 +20,46 @@ In summary, LoRE-SD offers a framework for estimating data-driven, local respons
 
 This code makes use of MRtrix3 commands. Make sure you have a working installation installed and have added the binaries to your PATH.
 
+## Installation
+
+We recommend using [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html) to manage the Python environment, particularly on HPC systems where you may not have root access.
+
+**1. Install micromamba** (skip if already available):
+```bash
+curl -L https://micro.mamba.pm/install.sh | bash
+```
+
+**2. Create and activate a dedicated environment** (replace the path with a location you have write access to):
+```bash
+micromamba create -p /path/to/lore_sd_env python=3.10
+micromamba activate /path/to/lore_sd_env
+```
+
+**3. Install Python build dependencies:**
+```bash
+pip install pybind11 numpy setuptools wheel
+```
+
+**4. Install compiled dependencies via conda-forge** (required for the `nlopt` optimiser):
+```bash
+micromamba install -c conda-forge nlopt cmake compilers
+```
+
+**5. Install LoRE-SD in editable mode:**
+```bash
+pip install -e . --no-build-isolation
+```
+
+> [!NOTE]
+> `--no-build-isolation` is required because the build needs access to the `pybind11` and `numpy` packages already installed in the environment.
+
 ## Usage
 1. Clone the repo and run `make install` to install required dependencies and add some useful commands to the path. If you do not want to add console scripts to your path, run `pip install -e .`.
 2. Run the LoRE-SD algorithm on your dMRI data: \
-    `lore_dwi2decomposition <input_dwi> <output_dir> [--reg <regularisation_parameter>] [--grid_size <grid_size>] [--cores <number_of_cores>] [--mask <mask>] [--mask_algo <algorithm>]`
-    * `<input_dwi>`: Input DWI in MRtrix3 format (.mif). Gradient directions and b-values must be embedded in the file header (use `mrconvert` with `-fslgrad` to embed them if needed).
+    `lore_dwi2decomposition <input_dwi> <output_dir> [--reg <regularisation_parameter>] [--grid_size <grid_size>] [--cores <number_of_cores>] [--mask <mask>] [--mask_algo <algorithm>] [--bvecs <bvecs> --bvals <bvals>]`
+    * `<input_dwi>`: Input DWI — accepts **MRtrix3 format (`.mif`)** or **NIfTI format (`.nii.gz`)**:
+      * `.mif` — gradient table must be embedded in the header (use `mrconvert -fslgrad <bvecs> <bvals>` to embed if needed).
+      * `.nii.gz` — provide `--bvecs` and `--bvals` to supply the gradient table separately.
     * `<output_dir>`: Directory to write the output files to. Output files are `odf.mif`, `response.mif` and `gaussian_fractions.mif`
     * `--mask <mask>`: Path to a pre-computed brain mask (.mif). If omitted, a mask is generated automatically — see `--mask_algo` below.
     * `--mask_algo <algorithm>`: Algorithm passed to `dwi2mask` when no `--mask` is given. Default is `synthstrip`. Available options depend on your MRtrix3 installation; common choices are:
@@ -37,6 +72,7 @@ This code makes use of MRtrix3 commands. Make sure you have a working installati
     * `--reg <regularisation_parameter>`: (optional) Default is $10^{-3}$
     * `--grid_size <grid_size>`: (optional) Default is 10. This is the square grid size of the response function representation. Values are always linearly separated in $[0, 4] \mu m^2/ms$.
     * `--cores <number_of_cores>`: (optional) Default is 1. Number of cores to use for multiprocessing. As a reference, using 50 cores takes about 5 minutes to process a full DWI of the brain.
+    * `--bvecs <bvecs>` / `--bvals <bvals>`: (optional) Paths to bvecs and bvals files. Only required when the input is in NIfTI format (`.nii.gz`); not needed for `.mif` files.
     * `--eval_matrix <Q>`: Evaluation matrix (stored as .npy) used to enforce ODF non-negativity. Will be generated with 600 uniformly spread vectors if not present. Useful to avoid regenerating this matrix for multiple experiments.
 3. Analyze the ODF estimates and generated image contrasts. The basic image contrasts can be generated using: \
     `lore_decomposition2contrast <input_fractions> <output_dir>`
