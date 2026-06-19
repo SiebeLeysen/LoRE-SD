@@ -45,6 +45,7 @@ setup(
         'seaborn',
         'pandas',
         'pybind11',
+        'tqdm',
         'nlopt'
         # Add other dependencies here
     ],
