@@ -12,6 +12,8 @@ If scipy is not available a simple multiplicative update fallback is used (slowe
 """
 from __future__ import annotations
 
+import lore_sd  # noqa: F401  caps BLAS threads; must be imported before numpy
+
 import argparse
 import sys
 import numpy as np

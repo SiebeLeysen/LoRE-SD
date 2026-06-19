@@ -60,7 +60,9 @@ def rfa_map(ad, rd):
     rd_matrix *= mask
 
     lambda_mean = (ad_matrix + 2*rd_matrix) / 3
-    return np.nan_to_num(np.sqrt(3/2) * np.sqrt((ad_matrix - lambda_mean)**2 + (rd_matrix - lambda_mean)**2 + (rd_matrix - lambda_mean)**2) / np.sqrt(ad_matrix**2 + rd_matrix**2 + rd_matrix**2))
+    # The grid includes ad=rd=0; 0/0 is expected and handled by nan_to_num (→ 0).
+    with np.errstate(divide='ignore', invalid='ignore'):
+        return np.nan_to_num(np.sqrt(3/2) * np.sqrt((ad_matrix - lambda_mean)**2 + (rd_matrix - lambda_mean)**2 + (rd_matrix - lambda_mean)**2) / np.sqrt(ad_matrix**2 + rd_matrix**2 + rd_matrix**2))
 
 
 def extra_axonal_contrast(ad_range, rd_range, with_isotropic=True, rate=10):

@@ -23,14 +23,20 @@ This code makes use of MRtrix3 commands. Make sure you have a working installati
 ## Usage
 1. Clone the repo and run `make install` to install required dependencies and add some useful commands to the path. If you do not want to add console scripts to your path, run `pip install -e .`.
 2. Run the LoRE-SD algorithm on your dMRI data: \
-    `lore_dwi2decomposition <input_dwi> <output_dir> [--reg <regularisation_parameter>] [--grid_size <grid_size>] [--cores <number_of_cores>] [--bvecs <bvecs>] [--bvals <bvals>]`
-    * `<input_dwi>`: Input DWI in MRtrix3 format (.mif) or NIfTI format (.nii.gz)
+    `lore_dwi2decomposition <input_dwi> <output_dir> [--reg <regularisation_parameter>] [--grid_size <grid_size>] [--cores <number_of_cores>] [--mask <mask>] [--mask_algo <algorithm>]`
+    * `<input_dwi>`: Input DWI in MRtrix3 format (.mif). Gradient directions and b-values must be embedded in the file header (use `mrconvert` with `-fslgrad` to embed them if needed).
     * `<output_dir>`: Directory to write the output files to. Output files are `odf.mif`, `response.mif` and `gaussian_fractions.mif`
-    * `--mask <mask>`: Path to the brain mask. If not present, a brain mask will be generated using `dwi2mask`.
+    * `--mask <mask>`: Path to a pre-computed brain mask (.mif). If omitted, a mask is generated automatically — see `--mask_algo` below.
+    * `--mask_algo <algorithm>`: Algorithm passed to `dwi2mask` when no `--mask` is given. Default is `synthstrip`. Available options depend on your MRtrix3 installation; common choices are:
+      * `synthstrip` *(default)* — deep-learning brain extraction; best quality but requires the SynthStrip model and is slower.
+      * `legacy` — classic MRtrix dwi2mask behaviour; fast, no external models.
+      * `mtnorm` — iterative mask from multi-tissue normalisation; good for multi-shell DWI.
+      * `fslbet`, `hdbet`, `ants`, `b02template`, `mean`, `trace`, `3dautomask`, `consensus` — see `dwi2mask <algorithm> --help` for details.
+
+      To skip automatic mask generation entirely, provide a `--mask` directly — recommended when running many subjects or when you have a quality-controlled mask.
     * `--reg <regularisation_parameter>`: (optional) Default is $10^{-3}$
     * `--grid_size <grid_size>`: (optional) Default is 10. This is the square grid size of the response function representation. Values are always linearly separated in $[0, 4] \mu m^2/ms$.
     * `--cores <number_of_cores>`: (optional) Default is 1. Number of cores to use for multiprocessing. As a reference, using 50 cores takes about 5 minutes to process a full DWI of the brain.
-    * `--bvecs <bvecs> --bvals <bvals>`: Paths to bvecs and bvals file respectively if using NIfTI format.
     * `--eval_matrix <Q>`: Evaluation matrix (stored as .npy) used to enforce ODF non-negativity. Will be generated with 600 uniformly spread vectors if not present. Useful to avoid regenerating this matrix for multiple experiments.
 3. Analyze the ODF estimates and generated image contrasts. The basic image contrasts can be generated using: \
     `lore_decomposition2contrast <input_fractions> <output_dir>`
