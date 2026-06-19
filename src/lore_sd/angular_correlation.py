@@ -1,5 +1,7 @@
 # This file will take two files with ODFs as input and write the angular correlation coefficient (Anderson, 2005) to a file.
 
+import lore_sd  # noqa: F401  caps BLAS threads; must be imported before numpy
+
 import argparse
 
 import numpy as np
