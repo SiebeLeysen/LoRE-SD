@@ -1,3 +1,5 @@
+import lore_sd  # noqa: F401  caps BLAS threads; must be imported before numpy
+
 import argparse
 import numpy as np
 import os
