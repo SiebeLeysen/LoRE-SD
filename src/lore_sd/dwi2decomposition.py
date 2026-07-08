@@ -123,7 +123,14 @@ def main():
     input_args = handle_input(args)
     cores = adjust_cores(args.cores)
     if args.mask is not None:
-        mask = load_mrtrix(args.mask).data > .5
+        mask_path = args.mask
+        if not mask_path.endswith('.mif'):
+            with tempfile.TemporaryDirectory() as td:
+                tmp_mif = os.path.join(td, 'mask.mif')
+                subprocess.run(['mrconvert', mask_path, tmp_mif, '-force'], check=True)
+                mask = np.squeeze(load_mrtrix(tmp_mif).data) > .5
+        else:
+            mask = np.squeeze(load_mrtrix(mask_path).data) > .5
     else:
         mask = get_mask(args.input, cores, args.mask_algo)
     

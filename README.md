@@ -61,7 +61,7 @@ pip install -e . --no-build-isolation
       * `.mif` — gradient table must be embedded in the header (use `mrconvert -fslgrad <bvecs> <bvals>` to embed if needed).
       * `.nii.gz` — provide `--bvecs` and `--bvals` to supply the gradient table separately.
     * `<output_dir>`: Directory to write the output files to. Output files are `odf.mif`, `response.mif` and `gaussian_fractions.mif`
-    * `--mask <mask>`: Path to a pre-computed brain mask (.mif). If omitted, a mask is generated automatically — see `--mask_algo` below.
+    * `--mask <mask>`: Path to a pre-computed brain mask. Accepts `.mif` directly, or any other format `mrconvert` understands (e.g. `.nii.gz`) — non-`.mif` masks are converted automatically. If omitted, a mask is generated automatically — see `--mask_algo` below.
     * `--mask_algo <algorithm>`: Algorithm passed to `dwi2mask` when no `--mask` is given. Default is `synthstrip`. Available options depend on your MRtrix3 installation; common choices are:
       * `synthstrip` *(default)* — deep-learning brain extraction; best quality but requires the SynthStrip model and is slower.
       * `legacy` — classic MRtrix dwi2mask behaviour; fast, no external models.
