@@ -91,10 +91,23 @@ class Image (object):
         ''' Load MRtrix .mif file. '''
         # read image header
         with open(filename, 'r', encoding='latin-1') as f:
+            magic = f.readline().strip()
+            if magic != 'mrtrix image':
+                raise ValueError(
+                    f"'{filename}' is not a valid MRtrix .mif file "
+                    f"(expected 'mrtrix image' header, got {magic!r}). "
+                    "Convert it first, e.g. with `mrconvert`."
+                )
             fl = ''
             tr_count = 0
             while fl != 'END':
-                fl = f.readline().strip()
+                fl = f.readline()
+                if fl == '':
+                    raise ValueError(
+                        f"'{filename}' is not a valid MRtrix .mif file "
+                        "(reached end of file without finding an 'END' header line)."
+                    )
+                fl = fl.strip()
                 if fl.startswith('dim'):
                     imsize = tuple(map(int, fl.split(':')[1].strip().split(',')))
                 elif fl.startswith('vox'):
