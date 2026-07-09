@@ -69,12 +69,6 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, 
     # Initialize arrays for ODFs, responses, and fiber fractions
     odfs, init_odfs, responses, fs = map(np.zeros,
                               [(mask_len, sh.n4l(lmax)), (mask_len, sh.n4l(lmax)), (mask_len, M, lmax // 2 + 1), (mask_len, len(Da), len(Dr))])
-    init_objs = np.zeros(mask_len)
-    final_objs = np.zeros(mask_len)
-    for i, result in enumerate(results):
-        odfs[i], init_odfs[i], responses[i], fs[i] = result['odf'], result['init_odf'], result['response'], result['gaussian_fractions']
-        init_objs[i] = result['init_obj']
-        final_objs[i] = result['final_obj']
     # Simplified version of creating output arrays with the correct shape
     shapes = [
         mask.shape + (sh.n4l(lmax),),
@@ -84,8 +78,6 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, 
     ]
 
     odfs, init_odfs, responses, gaussian_fractions = [math_utils.create_output_array(data, mask, shape) for data, shape in zip((odfs, init_odfs, responses, fs), shapes)]
-    init_objs = math_utils.create_output_array(init_objs, mask, mask.shape)
-    final_objs = math_utils.create_output_array(final_objs, mask, mask.shape)
 
     reconstructed = sh.calcdwi(sh.sphconv(responses, odfs), grad)
     rmse = np.linalg.norm(reconstructed - dwi, axis=-1) / np.sqrt(dwi.shape[-1])
@@ -96,8 +88,7 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, 
         print(f'Execution time: {time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start_time))}')
     return {'odf': odfs, 'response': responses, 
             'gaussian_fractions': gaussian_fractions, 'rmse': rmse, 
-            'predicted_signal': reconstructed, 'init_odf': init_odfs, 
-            'init_obj': init_objs, 'final_obj': final_objs}
+            'predicted_signal': reconstructed, 'init_odf': init_odfs}
 
 
 def get_transformation_matrix(num_dirs, lmax):
@@ -175,11 +166,8 @@ def decompose_voxel(voxel, Da, Dr, grad, lmax, reg, Q, obj_fun, jac):
     # print(f'Init objective: {obj_fun(init, S, gaussians, reg):.4e}, Final objective: {res.fun:.4e}, Success: {res.success}, Message: {res.message}')
     response = to_response(fs, gaussians) / scale_factor
 
-    init_obj = obj_fun(init, S, gaussians, reg)
-    final_obj = res.fun
-
     return {'odf': odf, 'response': response, 'gaussian_fractions': np.squeeze(fs.reshape((len(Da), len(Dr)))),
-            'init_odf': init[:sh.n4l(lmax)], 'init_fs': init[sh.n4l(lmax):].reshape((len(Da), len(Dr))), 'init_obj': init_obj, 'final_obj': final_obj}
+            'init_odf': init[:sh.n4l(lmax)], 'init_fs': init[sh.n4l(lmax):].reshape((len(Da), len(Dr)))}
 
 def get_init_and_bounds_from_csd(lmax, Da, Dr, scaled_gaussians, S, constraint_funs):
     """
