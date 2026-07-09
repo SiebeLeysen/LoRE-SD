@@ -40,8 +40,8 @@ void usage()
      + Argument("image").type_image_in()
     + Option("lmax", "maximum spherical harmonic order (default: 8)")
      + Argument("order").type_integer(8)
-    + Option("grid_size", "grid size for Da/Dr (default: 7)")
-     + Argument("size").type_integer(7)
+    + Option("grid_size", "grid size for Da/Dr (default: 10)")
+     + Argument("size").type_integer(10)
     + Option("reg", "regularisation parameter (default: 1e-3)")
      + Argument("value").type_float(1e-3)
     + Option("maxeval", "max evaluations for main optimizer (default: 400") 
@@ -223,7 +223,7 @@ void run()
             throw Exception("lmax must be an even number");
     }
 
-    int grid_size = 7;
+    int grid_size = 10;
     opt = get_options("grid_size");
     if (opt.size())
         grid_size = to<int>(opt[0][0]);

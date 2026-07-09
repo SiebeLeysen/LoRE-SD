@@ -147,9 +147,6 @@ def main():
         'gaussian_fractions.mif': out['gaussian_fractions'],
         'predicted_signal.mif': out['predicted_signal'],
         'rmse.mif': out['rmse'],
-        'init_odf.mif': out['init_odf'],
-        'init_obj.mif': out['init_obj'],
-        'final_obj.mif': out['final_obj'],
     }
 
     save_outputs(args, save_dict, vox, grad)

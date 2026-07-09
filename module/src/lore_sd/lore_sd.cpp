@@ -244,7 +244,7 @@ namespace LoreSD
       {
         for (double dr : params.dr)
         {
-          if (da >= dr)
+          if (da >= dr) 
             ++valid;
         }
       }
@@ -334,7 +334,7 @@ namespace LoreSD
             S(d->S.data(), n_shells, n_sh);
 
         // -------------------------------------------------------
-        // Buffers (assumed preallocated in OptData ideally)
+        // Buffers
         // -------------------------------------------------------
 
         Eigen::VectorXd& K = d->buf_kernel;
@@ -546,16 +546,24 @@ namespace LoreSD
       B(0, 0) = 1.0;
       s[0] = dc;
 
-      auto problem = MR::Math::ICLS::Problem<double>(H, A, B, t, s, 1e-10, 1e-10, 300, 1e-10);
+      auto problem = MR::Math::ICLS::Problem<double>(H, A, B, t, s, 0, 0, 0, 1e-3);
       auto solver = MR::Math::ICLS::Solver<double>(problem);
 
       Eigen::VectorXd odf = Eigen::Map<Eigen::VectorXd>(x0.data(), n_sh);
       const size_t niter = solver(odf, b);
       (void)niter;
 
+      // Normalize x0
       for (int i = 0; i < n_sh; ++i)
-        x0[i] = odf[i];
-      x0[0] = dc;
+        {
+          x0[i] /= x0[0];
+          x0[i] *= dc;
+        }
+
+      
+      for (int i = 1; i < n_sh; ++i)
+        x0[i] *= 0.0;
+
     }
 
   } // namespace
@@ -692,32 +700,11 @@ namespace LoreSD
     for (int g = 0; g < n_gauss; ++g)
       ws.rf += fs_init[g] * ws.gaussians_scaled[g];
 
-    ws.csd.S = ws.S;
-    ws.csd.rf = ws.rf;
-    std::vector<double> lb_csd(n_sh, -std::numeric_limits<double>::infinity());
-    std::vector<double> ub_csd(n_sh, std::numeric_limits<double>::infinity());
     const double dc = 1.0 / std::sqrt(4.0 * MR::Math::pi);
-    lb_csd[0] = dc;
-    ub_csd[0] = dc;
-    // ws.opt_csd.set_lower_bounds(lb_csd);
-    // ws.opt_csd.set_upper_bounds(ub_csd);
     
 
     std::vector<double> odf_init(ws.x0.begin(), ws.x0.begin() + n_sh);
     const Eigen::VectorXd odf_init_before = Eigen::Map<const Eigen::VectorXd>(odf_init.data(), n_sh);
-
-    try
-    {
-      solve_odf_icls(ws.rf, ws.S, ws.x0, params, ws.n_sh, ws.n_shells);
-    }
-    catch (const std::exception &)
-    {
-    }
-    const Eigen::Map<const Eigen::VectorXd> odf_init_after(ws.x0.data(), n_sh);
-
-    ws.x0[0] = dc;
-    for (int g = 0; g < n_gauss; ++g)
-      ws.x0[n_sh + g] =0;
 
     // set up OptData for subsequent steps
     ws.data.S = ws.S;
@@ -773,7 +760,25 @@ namespace LoreSD
 
     result.odf.assign(odf.data(), odf.data() + odf.size());
     result.fracs.assign(fs.data(), fs.data() + fs.size());
-    result.response.assign(response.data(), response.data() + response.size());
+    const int n_orders = params.lmax / 2 + 1;
+
+    result.response.assign(static_cast<size_t>(n_shells * n_orders), 0.0f);
+
+    // Output order:
+    // idx = shell * n_orders + order_index
+    // order_index 0 -> l=0
+    // order_index 1 -> l=2
+    // order_index 2 -> l=4
+    // ...
+    for (int s = 0; s < n_shells; ++s)
+    {
+        for (int k = 0; k < n_orders; ++k)
+        {
+            const int idx = s * n_orders + k;
+            result.response[static_cast<size_t>(idx)] =
+                static_cast<float>(response(s, k));
+        }
+    }
     result.predicted_signal.assign(predicted.data(), predicted.data() + predicted.size());
 
     const bool need_objectives = params.init_obj_fun || params.final_obj_fun;

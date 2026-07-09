@@ -168,7 +168,7 @@ def decompose_voxel(voxel, Da, Dr, grad, lmax, reg, Q, obj_fun, jac):
 
     res = minimize(obj_fun, init, jac=jac, bounds=bounds, args= (S, gaussians, reg),
                     constraints=[constraints.non_negative_odf(Q), constraints.sum_of_fractions_equals_one(lmax)],
-                    method='SLSQP', options={'ftol':1e-4, 'maxiter': 100000})
+                    method='SLSQP', options={'ftol':1e-5, 'maxiter': 100000})
     odf = res.x[:sh.n4l(lmax)]
     fs = res.x[sh.n4l(lmax):]
 

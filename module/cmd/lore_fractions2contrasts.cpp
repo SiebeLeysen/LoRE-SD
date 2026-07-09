@@ -37,6 +37,8 @@ void usage()
         + Option("extra_axonal", "write extra-axonal contrast to file") + Argument("file").type_file_out()
         + Option("free_water", "write free-water contrast to file") + Argument("file").type_file_out()
         + Option("rfa", "write RFA map to file") + Argument("file").type_file_out()
+        + Option("ad", "write AD map to file") + Argument("file").type_file_out()
+        + Option("rd", "write RD map to file") + Argument("file").type_file_out()
         + Option("rate", "decay rate for intra-axonal weighting (default: 10)")
             + Argument("value").type_integer(10)
         + Option("with_isotropic", "treat isotropic (ad==rd) as valid for contrasts")
@@ -189,6 +191,50 @@ static std::vector<std::vector<double>> rfa_map(const std::vector<double> &ad, c
     return out;
 }
 
+static std::vector<std::vector<double>> ad_map(const std::vector<double> &ad, const std::vector<double> &rd)
+{
+    const size_t na = ad.size();
+    const size_t nr = rd.size();
+    std::vector<std::vector<double>> out(na, std::vector<double>(nr, 0.0));
+    for (size_t i = 0; i < na; ++i)
+    {
+        for (size_t j = 0; j < nr; ++j)
+        {
+            double adv = ad[i];
+            double rdv = rd[j];
+            if (!(adv >= rdv))
+            {
+                out[i][j] = 0.0;
+                continue;
+            }
+            out[i][j] = adv;
+        }
+    }
+    return out;
+}
+
+static std::vector<std::vector<double>> rd_map(const std::vector<double> &ad, const std::vector<double> &rd)
+{
+    const size_t na = ad.size();
+    const size_t nr = rd.size();
+    std::vector<std::vector<double>> out(na, std::vector<double>(nr, 0.0));
+    for (size_t i = 0; i < na; ++i)
+    {
+        for (size_t j = 0; j < nr; ++j)
+        {
+            double adv = ad[i];
+            double rdv = rd[j];
+            if (!(adv >= rdv))
+            {
+                out[i][j] = 0.0;
+                continue;
+            }
+            out[i][j] = rdv;
+        }
+    }
+    return out;
+}
+
 static double get_contrast(const std::vector<float> &fs, const std::vector<double> &ad, const std::vector<double> &rd, const std::vector<std::vector<double>> &weights)
 {
     // fs is flattened with ad outer, rd inner: idx = i * nr + j
@@ -211,8 +257,10 @@ static double get_contrast(const std::vector<float> &fs, const std::vector<doubl
 class ContrastsProcessor
 {
 public:
-    ContrastsProcessor(Image<float> &fractions, Image<float> &out_intra, Image<float> &out_extra, Image<float> &out_free, Image<float> &out_rfa, int rate, bool with_isotropic)
-        : fractions_image(fractions), intra_image(out_intra), extra_image(out_extra), free_image(out_free), rfa_image(out_rfa), rate(rate), with_isotropic(with_isotropic)
+    ContrastsProcessor(Image<float> &fractions, Image<float> &out_intra, Image<float> &out_extra, Image<float> &out_free, Image<float> &out_rfa, 
+        Image<float> &out_ad, Image<float> &out_rd, int rate, bool with_isotropic)
+        : fractions_image(fractions), intra_image(out_intra), extra_image(out_extra), 
+            free_image(out_free), rfa_image(out_rfa), ad_image(out_ad), rd_image(out_rd), rate(rate), with_isotropic(with_isotropic)
     {
         // nothing
     }
@@ -243,11 +291,15 @@ public:
         auto extra = extra_axonal_contrast(ad_range, rd_range, with_isotropic, static_cast<double>(rate));
         auto freew = free_water_contrast(ad_range, rd_range);
         auto rfam = rfa_map(ad_range, rd_range);
+        auto ad = ad_map(ad_range, rd_range);
+        auto rd = rd_map(ad_range, rd_range);
 
         const double intra_val = get_contrast(fs, ad_range, rd_range, intra);
         const double extra_val = get_contrast(fs, ad_range, rd_range, extra);
         const double free_val = get_contrast(fs, ad_range, rd_range, freew);
         const double rfa_val = get_contrast(fs, ad_range, rd_range, rfam);
+        const double ad_val = get_contrast(fs, ad_range, rd_range, ad);
+        const double rd_val = get_contrast(fs, ad_range, rd_range, rd);
 
         if (intra_image.valid())
         {
@@ -269,6 +321,16 @@ public:
             assign_pos_of(fracs, 0, 3).to(rfa_image);
             rfa_image.value() = static_cast<float>(rfa_val);
         }
+        if (ad_image.valid())
+        {
+            assign_pos_of(fracs, 0, 3).to(ad_image);
+            ad_image.value() = static_cast<float>(ad_val);
+        }
+        if (rd_image.valid())
+        {
+            assign_pos_of(fracs, 0, 3).to(rd_image);
+            rd_image.value() = static_cast<float>(rd_val);
+        }
     }
 
 private:
@@ -277,6 +339,8 @@ private:
     Image<float> extra_image;
     Image<float> free_image;
     Image<float> rfa_image;
+    Image<float> ad_image;
+    Image<float> rd_image;
     int rate = 10;
     bool with_isotropic = true;
 };
@@ -302,11 +366,15 @@ void run()
     auto opt_extra = get_options("extra_axonal");
     auto opt_free = get_options("free_water");
     auto opt_rfa = get_options("rfa");
+    auto opt_ad = get_options("ad");
+    auto opt_rd = get_options("rd");
 
     const bool write_intra = opt_intra.size() != 0;
     const bool write_extra = opt_extra.size() != 0;
     const bool write_free = opt_free.size() != 0;
     const bool write_rfa = opt_rfa.size() != 0;
+    const bool write_ad = opt_ad.size() != 0;
+    const bool write_rd = opt_rd.size() != 0;
 
     auto mkdir_parent = [](const std::string &path){
         const auto pos = path.find_last_of('/');
@@ -326,6 +394,8 @@ void run()
     Image<float> extra_img;
     Image<float> free_img;
     Image<float> rfa_img;
+    Image<float> ad_img;
+    Image<float> rd_img;
 
     if (write_intra)
     {
@@ -351,7 +421,19 @@ void run()
         mkdir_parent(rfa_path);
         rfa_img = Image<float>::create(rfa_path, out_header);
     }
+    if (write_ad)
+    {
+        const std::string ad_path = std::string(opt_ad[0][0]);
+        mkdir_parent(ad_path);
+        ad_img = Image<float>::create(ad_path, out_header);
+    }
+    if (write_rd)
+    {
+        const std::string rd_path = std::string(opt_rd[0][0]);
+        mkdir_parent(rd_path);
+        rd_img = Image<float>::create(rd_path, out_header);
+    }
 
-    ContrastsProcessor proc(fractions, intra_img, extra_img, free_img, rfa_img, rate, with_iso);
+    ContrastsProcessor proc(fractions, intra_img, extra_img, free_img, rfa_img, ad_img, rd_img, rate, with_iso);
     ThreadedLoop("mapping fractions -> contrasts", fractions, 0, 3).run(proc, fractions);
 }
