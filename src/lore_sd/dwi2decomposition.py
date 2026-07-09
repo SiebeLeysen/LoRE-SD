@@ -1,8 +1,11 @@
+import lore_sd  # noqa: F401  caps BLAS threads; must be imported before numpy
+
 import argparse
 import numpy as np
 import os
 import sys
 import subprocess
+import tempfile
 
 # sys.path.append('/home/sleyse4/repos/LoRE_SD/LoRE-SD/src')
 # sys.path.append('/home/sleyse4/repos/LoRE_SD/LoRE-SD')
@@ -81,11 +84,22 @@ def convert_to_mif(nii_path, bvecs_path, bvals_path):
     subprocess.run(f'rm {nii_path.replace(".nii.gz", ".mif")}'.split(' '))
     return out
 
-def get_mask(input_image, cores):
-    subprocess.run(['dwi2mask', input_image, 'tmp_mask.mif', '-nthreads', str(cores)])
-    mask = load_mrtrix('tmp_mask.mif').data > .5
-    subprocess.run(['rm', 'tmp_mask.mif'])
-    return mask
+def get_mask(input_image, cores, algorithm='synthstrip'):
+    """Generate a brain mask with MRtrix ``dwi2mask <algorithm>``.
+
+    Modern MRtrix3 requires the masking algorithm as the first positional
+    argument (``dwi2mask algorithm input output``); the old ``dwi2mask input
+    output`` form is now parsed as ``algorithm=input`` and fails. We run inside a
+    temporary directory (no CWD collisions / leftovers under parallel runs), pass
+    ``-force`` for idempotency, and use ``check=True`` so a masking failure raises
+    immediately instead of silently falling through to a missing or stale file.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        tmp_mask = os.path.join(td, 'tmp_mask.mif')
+        cmd = ['dwi2mask', algorithm, input_image, tmp_mask,
+               '-nthreads', str(cores), '-force']
+        subprocess.run(cmd, check=True)
+        return load_mrtrix(tmp_mask).data > .5
 
 def main():
     parser = argparse.ArgumentParser(
@@ -99,6 +113,8 @@ def main():
     parser.add_argument('--bvecs', help='Path to the bvecs file', default=None)
     parser.add_argument('--bvals', help='Path to the bvals file', default=None)
     parser.add_argument('--mask', help='Path to the mask file', default=None)
+    parser.add_argument('--mask_algo', help='dwi2mask algorithm to use when no --mask is given',
+                        default='synthstrip')
     parser.add_argument('--eval_matrix', help='Path to the evaluation matrix', default=None)
     parser.add_argument('--slice', help='Slice number to process', type=int, default=None)
 
@@ -109,7 +125,7 @@ def main():
     if args.mask is not None:
         mask = load_mrtrix(args.mask).data > .5
     else:
-        mask = get_mask(args.input, cores)
+        mask = get_mask(args.input, cores, args.mask_algo)
     
     ad_list, rd_list = prepare_parameters(args.grid_size)
 

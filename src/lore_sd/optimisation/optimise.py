@@ -50,21 +50,30 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, 
     if Q is None:
         Q = get_transformation_matrix(600, lmax)  # Transformation matrix
 
-    # Prepare arguments for multiprocessing
-    # Arguments used for optimisation of voxel
-    args = [(voxel, Da, Dr, grad, lmax, reg, Q, obj_fun, jac) for voxel in
-            dwi[mask]]
     try:
         mp.set_start_method('spawn')
     except RuntimeError:
         pass
 
-    if verbose:
-        with mp.Pool(cores) as pool:
-            results = pool.starmap(decompose_voxel, tqdm.tqdm(args, total=len(args)), chunksize=1)
-    else:
-        with mp.Pool(cores) as pool:
-            results = pool.starmap(decompose_voxel, args, chunksize=1)
+    # Only the per-voxel signal varies between tasks; Da, Dr, grad, lmax, reg, Q,
+    # obj_fun and jac are identical for every voxel. Send those (large) constants
+    # to each worker exactly once, via the pool initialiser, instead of packing
+    # them into every voxel's task. Otherwise the parent process has to re-pickle
+    # Q (~100 kB) for each of potentially hundreds of thousands of voxels and
+    # feed them out one at a time, which serialises the whole run on a single
+    # core while the workers sit idle waiting to be fed.
+    voxels = dwi[mask]
+    n_vox = len(voxels)
+    init_args = (Da, Dr, grad, lmax, reg, Q, obj_fun, jac)
+    # A few dozen chunks per worker keeps the workers busy (low IPC overhead)
+    # without hurting load balancing across voxels of differing difficulty.
+    chunksize = max(1, n_vox // (cores * 50)) if n_vox else 1
+
+    with mp.Pool(cores, initializer=_init_decompose_worker, initargs=init_args) as pool:
+        mapped = pool.imap(_decompose_voxel_from_globals, voxels, chunksize=chunksize)
+        if verbose:
+            mapped = tqdm.tqdm(mapped, total=n_vox)
+        results = list(mapped)
 
     # Initialize arrays for ODFs, responses, and fiber fractions
     odfs, init_odfs, responses, fs = map(np.zeros,
@@ -117,6 +126,23 @@ def get_transformation_matrix(num_dirs, lmax):
     # Transformation matrix to map between DWI and SH
     Q = sh.modshbasis(lmax, dirs[:, 0], dirs[:, 1])
     return Q
+
+
+# Per-worker storage for the constants shared by every voxel. Populated once per
+# worker process by the pool initialiser (see get_signal_decomposition) so the
+# constants are pickled once per worker rather than once per voxel task.
+_WORKER_CONSTANTS = None
+
+
+def _init_decompose_worker(Da, Dr, grad, lmax, reg, Q, obj_fun, jac):
+    """Pool initialiser: cache the per-voxel-invariant arguments in this worker."""
+    global _WORKER_CONSTANTS
+    _WORKER_CONSTANTS = (Da, Dr, grad, lmax, reg, Q, obj_fun, jac)
+
+
+def _decompose_voxel_from_globals(voxel):
+    """Run decompose_voxel for a single voxel using the worker's cached constants."""
+    return decompose_voxel(voxel, *_WORKER_CONSTANTS)
 
 
 def decompose_voxel(voxel, Da, Dr, grad, lmax, reg, Q, obj_fun, jac):
