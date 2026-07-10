@@ -15,6 +15,8 @@
 
 #include <Eigen/Dense>
 
+using Clock = std::chrono::steady_clock;
+
 namespace LoreSD
 {
 
@@ -38,7 +40,8 @@ namespace LoreSD
       int n_shells;
       int n_rh;
       const double *odf_ptr = nullptr;
-
+      
+      double lambda_pos = 100.0;
 
       // Reusable buffers (mutable because objective is logically const)
       mutable Eigen::VectorXd buf_kernel; // length M
@@ -248,17 +251,21 @@ namespace LoreSD
             ++valid;
         }
       }
-      const double init_frac = valid > 0 ? (1.0 / static_cast<double>(valid)) : 0.0;
+
+      idx = 0;
       for (double da : params.da)
       {
-        for (double dr : params.dr)
-        {
-          const bool allowed = da >= dr;
-          lb[n_sh + idx] = allowed ? 0.0 : 0.0;
-          ub[n_sh + idx] = allowed ? 1.0 : 0.0;
-          x0[n_sh + idx] = allowed ? init_frac : 0.0;
-          ++idx;
-        }
+          for (double dr : params.dr)
+          {
+              const bool allowed = da >= dr;
+
+              lb[n_sh + idx] = allowed ? -std::numeric_limits<double>::infinity() : 0.0;
+              ub[n_sh + idx] = allowed ? std::numeric_limits<double>::infinity() : 0.0;
+
+              x0[n_sh + idx] = 0.0;
+
+              ++idx;
+          }
       }
     }
 
@@ -281,6 +288,7 @@ namespace LoreSD
     void non_negative_odf_constraint(unsigned m, double *result, unsigned n, const double *x, double *grad, void *data)
     {
       auto *d = reinterpret_cast<OptData *>(data);
+
       Eigen::Map<const Eigen::VectorXd> odf_map(x, d->n_sh);
       Eigen::Map<Eigen::VectorXd> res(result, d->Q.rows());
       res.noalias() = -d->Q * odf_map;
@@ -294,16 +302,14 @@ namespace LoreSD
             grad[i * n + j] = -d->Q(i, j);
         }
       }
-      
     }
 
     // Main coupled objective over ODF and Gaussian fractions.
     // The implementation is written to minimize allocations and reuse buffers.
     double objective_function(const std::vector<double>& x,
-          std::vector<double>& grad,
-          void* data)
+                          std::vector<double>& grad,
+                          void* data)
     {
-      // objective without profiling timestamps
         constexpr double kScale = 1e-5;
 
         auto* d = reinterpret_cast<OptData*>(data);
@@ -322,16 +328,41 @@ namespace LoreSD
 
         const double* x_ptr = x.data();
 
-        const double* odf = x_ptr;
-        const double* fs  = x_ptr + n_sh;
+        const double* odf   = x_ptr;
+        const double* z_ptr = x_ptr + n_sh;
 
-        const Eigen::Map<const Eigen::VectorXd> fs_vec(fs, n_gauss);
+        const Eigen::Map<const Eigen::VectorXd>
+            odf_vec(odf, n_sh);
 
-        const Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>>
-            G(d->gaussians_rh_flat.data(), n_gauss, M);
+        const Eigen::Map<const Eigen::VectorXd>
+            z(z_ptr, n_gauss);
 
-        const Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>>
-            S(d->S.data(), n_shells, n_sh);
+        // -------------------------------------------------------
+        // Softmax fractions
+        // -------------------------------------------------------
+
+        Eigen::VectorXd fs_vec(n_gauss);
+
+        const double zmax = z.maxCoeff();
+
+        fs_vec =
+            (z.array() - zmax).exp();
+
+        fs_vec /= fs_vec.sum();
+
+        const Eigen::Map<
+            const Eigen::Matrix<double,
+                                Eigen::Dynamic,
+                                Eigen::Dynamic,
+                                Eigen::ColMajor>
+        > G(d->gaussians_rh_flat.data(), n_gauss, M);
+
+        const Eigen::Map<
+            const Eigen::Matrix<double,
+                                Eigen::Dynamic,
+                                Eigen::Dynamic,
+                                Eigen::ColMajor>
+        > S(d->S.data(), n_shells, n_sh);
 
         // -------------------------------------------------------
         // Buffers
@@ -341,98 +372,237 @@ namespace LoreSD
         Eigen::VectorXd& D = d->buf_diff;
         Eigen::VectorXd& T = d->buf_tmp;
 
-        if ((int)K.size() != M) { K.resize(M); D.resize(M); T.resize(M); }
+        if ((int)K.size() != M)
+        {
+            K.resize(M);
+            D.resize(M);
+            T.resize(M);
+        }
 
         // -------------------------------------------------------
-        // KERNEL: K = G^T fs  (as matrix Kmat of size n_shells x n_sh)
+        // K = G^T f
         // -------------------------------------------------------
 
         K.noalias() = G.transpose() * fs_vec;
 
-        Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>> Kmat(K.data(), n_shells, n_sh);
+        Eigen::Map<
+            const Eigen::Matrix<double,
+                                Eigen::Dynamic,
+                                Eigen::Dynamic,
+                                Eigen::ColMajor>
+        > Kmat(K.data(), n_shells, n_sh);
 
-        // Compute diff matrix: diff = S - Kmat * diag(odf)
+        // -------------------------------------------------------
+        // Data term
+        // -------------------------------------------------------
+
         Eigen::MatrixXd diff = S;
+
         for (int j = 0; j < n_sh; ++j)
         {
-          diff.col(j).noalias() -= Kmat.col(j) * odf[j];
+            diff.col(j).noalias() -=
+                Kmat.col(j) * odf[j];
         }
 
         double cost = diff.squaredNorm();
 
-        // write D and T buffers (column-major mapping)
-        // D = diff (flattened), T = diff .* odf_rep (elementwise multiplied by odf per column)
-        if ((int)D.size() != M) { D.resize(M); T.resize(M); }
-        Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>> Dmat(D.data(), n_shells, n_sh);
-        Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>> Tmat(T.data(), n_shells, n_sh);
+        // -------------------------------------------------------
+        // Cache diff and diff .* odf
+        // -------------------------------------------------------
+
+        Eigen::Map<
+            Eigen::Matrix<double,
+                          Eigen::Dynamic,
+                          Eigen::Dynamic,
+                          Eigen::ColMajor>
+        > Dmat(D.data(), n_shells, n_sh);
+
+        Eigen::Map<
+            Eigen::Matrix<double,
+                          Eigen::Dynamic,
+                          Eigen::Dynamic,
+                          Eigen::ColMajor>
+        > Tmat(T.data(), n_shells, n_sh);
+
         Dmat = diff;
+
         for (int j = 0; j < n_sh; ++j)
-          Tmat.col(j) = diff.col(j) * odf[j];
-
-        // -------------------------------------------------------
-        // REGULARIZATION (kernel-based, masked view)
-        // -------------------------------------------------------
-
-        if (d->reg > 0.0 && n_sh > 1 && n_shells > 1)
         {
-          for (int j = 1; j < n_sh; ++j)
-          {
-            // sum squares of Kmat entries excluding i=0
-            cost += d->reg * Kmat.col(j).segment(1, n_shells - 1).squaredNorm();
-          }
+            Tmat.col(j) =
+                diff.col(j) * odf[j];
         }
 
         // -------------------------------------------------------
-        // GRADIENT
+        // RF regularization
+        // -------------------------------------------------------
+
+        if (d->reg > 0.0 &&
+            n_sh > 1 &&
+            n_shells > 1)
+        {
+            for (int j = 1; j < n_sh; ++j)
+            {
+                cost +=
+                    d->reg *
+                    Kmat.col(j)
+                        .segment(1, n_shells - 1)
+                        .squaredNorm();
+            }
+        }
+
+        // -------------------------------------------------------
+        // Positivity penalty
+        // -------------------------------------------------------
+
+        Eigen::VectorXd q =
+            d->Q * odf_vec;
+
+        if (d->lambda_pos > 0.0)
+        {
+            double pos_penalty = 0.0;
+
+            for (int i = 0; i < q.size(); ++i)
+            {
+                if (q[i] < 0.0)
+                {
+                    pos_penalty +=
+                        q[i] * q[i];
+                }
+            }
+
+            cost +=
+                d->lambda_pos *
+                pos_penalty;
+
+            
+            // std::cout
+            //     << "cost_data = "
+            //     << diff.squaredNorm()
+            //     << "\n";
+
+            // std::cout
+            //     << "cost_pos = "
+            //     << d->lambda_pos * pos_penalty
+            //     << "\n";
+
+        }
+
+        // -------------------------------------------------------
+        // Gradient
         // -------------------------------------------------------
 
         if (compute_grad)
         {
-            Eigen::Map<Eigen::VectorXd> g(grad.data(), grad.size());
+            Eigen::Map<Eigen::VectorXd>
+                g(grad.data(), grad.size());
+
             g.setZero();
 
-            // =====================================================
-            // d/d odf  (fully fused dot product)
-            // =====================================================
+            // ---------------------------------------------
+            // ODF gradient: data term
+            // ---------------------------------------------
 
             for (int j = 0; j < n_sh; ++j)
             {
-              // g[j] = -2 * Kj' * Dj
-              g[j] = -2.0 * Kmat.col(j).dot(diff.col(j));
+                g[j] =
+                    -2.0 *
+                    Kmat.col(j).dot(
+                        diff.col(j));
             }
 
-            // =====================================================
-            // fs gradient: GEMV (fast path)
-            // =====================================================
+            // ---------------------------------------------
+            // ODF gradient: positivity penalty
+            // ---------------------------------------------
 
-            // fs gradient: GEMV (fast path)
-            Eigen::Map<const Eigen::VectorXd> Tvec(T.data(), M);
-            g.segment(n_sh, n_gauss).noalias() = -2.0 * d->gaussians_rh_flat * Tvec;
-
-            // =====================================================
-            // regularization gradient (fs only, GEMV form)
-            // =====================================================
-
-            if (d->reg > 0.0 && n_sh > 1 && n_shells > 1)
+            if (d->lambda_pos > 0.0)
             {
-              // build masked kernel in-place using Dmat as temp: Rj[0]=0, Rj[i]=Kj[i] for i>=1
-              Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>> Rmat(D.data(), n_shells, n_sh);
-              for (int j = 1; j < n_sh; ++j)
-              {
-                Rmat(0, j) = 0.0;
-                Rmat.col(j).segment(1, n_shells - 1) = Kmat.col(j).segment(1, n_shells - 1);
-              }
+                Eigen::VectorXd pos_grad =
+                    Eigen::VectorXd::Zero(n_sh);
 
-              g.segment(n_sh, n_gauss).noalias() +=
-                (2.0 * d->reg) *
+                for (int i = 0; i < q.size(); ++i)
+                {
+                    if (q[i] < 0.0)
+                    {
+                        const double coeff =
+                            2.0 * q[i];
+
+                        pos_grad.noalias() +=
+                            coeff *
+                            d->Q.row(i).transpose();
+                    }
+                }
+
+                g.head(n_sh).noalias() +=
+                    d->lambda_pos *
+                    pos_grad;
+            }
+
+            // ---------------------------------------------
+            // Fraction gradient dJ/df
+            // ---------------------------------------------
+
+            Eigen::Map<const Eigen::VectorXd>
+                Tvec(T.data(), M);
+
+            g.segment(n_sh, n_gauss).noalias() =
+                -2.0 *
                 d->gaussians_rh_flat *
-                Eigen::Map<const Eigen::VectorXd>(Rmat.data(), M);
+                Tvec;
+
+            // ---------------------------------------------
+            // RF regularization gradient
+            // ---------------------------------------------
+
+            if (d->reg > 0.0 &&
+                n_sh > 1 &&
+                n_shells > 1)
+            {
+                Eigen::Map<
+                    Eigen::Matrix<double,
+                                  Eigen::Dynamic,
+                                  Eigen::Dynamic,
+                                  Eigen::ColMajor>
+                > Rmat(D.data(), n_shells, n_sh);
+
+                Rmat.setZero();
+
+                for (int j = 1; j < n_sh; ++j)
+                {
+                    Rmat.col(j)
+                        .segment(1, n_shells - 1) =
+                        Kmat.col(j)
+                            .segment(1, n_shells - 1);
+                }
+
+                g.segment(n_sh, n_gauss).noalias() +=
+                    (2.0 * d->reg) *
+                    d->gaussians_rh_flat *
+                    Eigen::Map<const Eigen::VectorXd>(
+                        Rmat.data(),
+                        M);
+            }
+
+            // ---------------------------------------------
+            // Softmax Jacobian:
+            // convert dJ/df -> dJ/dz
+            // ---------------------------------------------
+
+            {
+                Eigen::VectorXd grad_f =
+                    g.segment(n_sh, n_gauss);
+
+                const double dot =
+                    fs_vec.dot(grad_f);
+
+                g.segment(n_sh, n_gauss) =
+                    fs_vec.array() *
+                    (grad_f.array() - dot);
             }
 
             g *= kScale;
         }
-          // std::cout << "Cost: " << cost << std::endl;
-              return kScale * cost;
+
+        return kScale * cost;
     }
 
     struct Workspace
@@ -496,24 +666,26 @@ namespace LoreSD
         data.n_shells = n_shells;
         data.n_rh = n_rh;
         data.gaussians_rh = &gaussians_scaled;
+        data.lambda_pos = params.lambda_pos;
 
-        csd.Q = params.Q;
-        csd.n_sh = n_sh;
 
-        // Set up AUGLAG with LD_LBFGS local solver (lower overhead than SLSQP)
-        nlopt::opt local_opt(nlopt::LD_LBFGS, n_sh + n_gauss);
-        local_opt.set_xtol_rel(1e-7);
-        local_opt.set_ftol_rel(1e-7);
+        // // Set up AUGLAG with LD_LBFGS local solver (lower overhead than SLSQP)
+        // nlopt::opt local_opt(nlopt::LD_LBFGS, n_sh + n_gauss);
+        // local_opt.set_xtol_rel(1e-6);
+        // local_opt.set_ftol_rel(1e-6);
 
-        opt_main = nlopt::opt(nlopt::LD_AUGLAG, n_sh + n_gauss);
-        opt_main.set_local_optimizer(local_opt);
+        opt_main = nlopt::opt(nlopt::LD_LBFGS, n_sh + n_gauss);
+        // opt_main.set_local_optimizer(local_opt);
         opt_main.set_min_objective(objective_function, &data);
         opt_main.set_maxeval(params.maxeval);
+        opt_main.set_xtol_rel(1e-5);
+        opt_main.set_ftol_rel(1e-5);
+        opt_main.set_maxtime(5.0);
 
-        std::vector<double> tol_eq(1, 1e-2);
-        opt_main.add_equality_mconstraint(sum_of_fractions_constraint, &data, tol_eq);
-        std::vector<double> tol_ineq(params.Q.rows(), 1e-2);
-        opt_main.add_inequality_mconstraint(non_negative_odf_constraint, &data, tol_ineq);
+        // std::vector<double> tol_eq(1, 1e-2);
+        // opt_main.add_equality_mconstraint(sum_of_fractions_constraint, &data, tol_eq);
+        // std::vector<double> tol_ineq(params.Q.rows(), 1e-2);
+        // opt_main.add_inequality_mconstraint(non_negative_odf_constraint, &data, tol_ineq);
       }
     };
 
@@ -523,6 +695,7 @@ namespace LoreSD
                                const Params &params,
                                int n_sh,
                                int n_shells)
+
     {
       const double dc = 1.0 / std::sqrt(4.0 * MR::Math::pi);
 
@@ -725,17 +898,32 @@ namespace LoreSD
     double minf = 0.0;
     const std::vector<double> x_init = ws.x0;
     nlopt::result status = nlopt::FAILURE;
+
     try
     {
       status = ws.opt_main.optimize(ws.x0, minf);
     }
-    catch (const std::exception &)
+    catch (const std::exception &e)
     {
-      // optimization failed - fall back to current x0
+      
+      std::cout
+            << "NLOpt exception: "
+            << e.what()
+            << std::endl;
+
     }
 
     Eigen::VectorXd odf = Eigen::Map<Eigen::VectorXd>(ws.x0.data(), n_sh);
-    Eigen::VectorXd fs = Eigen::Map<Eigen::VectorXd>(ws.x0.data() + n_sh, n_gauss);
+    Eigen::Map<const Eigen::VectorXd> z(ws.x0.data() + n_sh, n_gauss);
+
+    Eigen::VectorXd fs(n_gauss);
+
+    const double zmax = z.maxCoeff();
+
+    fs = (z.array() - zmax).exp();
+
+    fs /= fs.sum();
+
 
     Eigen::VectorXd kernel_flat = ws.gaussians_rh_flat.transpose() * fs;
     Eigen::Map<const Eigen::MatrixXd> kernel(kernel_flat.data(), n_shells, n_sh);
@@ -798,6 +986,8 @@ namespace LoreSD
     }
 
     result.status = static_cast<int>(status);
+    
+    // std::cout << "Final objective: " << result.f1 << ", status: " << result.status << std::endl;
 
     return result;
   }

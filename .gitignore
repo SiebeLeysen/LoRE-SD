@@ -19,3 +19,6 @@ venv/
 tmp/
 temp/
 module/bin
+module/build
+module/bin/lore_dwi2fod
+module/bin/lore_fractions2contrasts

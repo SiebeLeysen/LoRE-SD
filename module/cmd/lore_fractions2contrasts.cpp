@@ -39,6 +39,7 @@ void usage()
         + Option("rfa", "write RFA map to file") + Argument("file").type_file_out()
         + Option("ad", "write AD map to file") + Argument("file").type_file_out()
         + Option("rd", "write RD map to file") + Argument("file").type_file_out()
+        + Option("tc_rfa", "write tissue-conditioned RFA map excluding free-water atoms") + Argument("file").type_file_out()
         + Option("rate", "decay rate for intra-axonal weighting (default: 10)")
             + Argument("value").type_integer(10)
         + Option("with_isotropic", "treat isotropic (ad==rd) as valid for contrasts")
@@ -254,13 +255,65 @@ static double get_contrast(const std::vector<float> &fs, const std::vector<doubl
     return sum;
 }
 
+static double get_conditional_contrast(
+    const std::vector<float> &fs,
+    const std::vector<double> &ad,
+    const std::vector<double> &rd,
+    const std::vector<std::vector<double>> &values,
+    const std::vector<std::vector<double>> &condition)
+{
+    // Computes sum f * condition * value / sum f * condition
+    // fs is flattened with ad outer, rd inner: idx = i * nr + j
+
+    const size_t na = ad.size();
+    const size_t nr = rd.size();
+
+    double num = 0.0;
+    double den = 0.0;
+
+    for (size_t i = 0; i < na; ++i)
+    {
+        for (size_t j = 0; j < nr; ++j)
+        {
+            const size_t idx = i * nr + j;
+
+            const double f = (idx < fs.size()) ? static_cast<double>(fs[idx]) : 0.0;
+            const double c = condition[i][j];
+            const double v = values[i][j];
+
+            num += f * c * v;
+            den += f * c;
+        }
+    }
+
+    return (den > 0.0) ? (num / den) : 0.0;
+}
+
+static std::vector<std::vector<double>> non_free_water_contrast(
+    const std::vector<double> &ad_range,
+    const std::vector<double> &rd_range)
+{
+    auto fw = free_water_contrast(ad_range, rd_range);
+
+    const size_t na = ad_range.size();
+    const size_t nr = rd_range.size();
+
+    std::vector<std::vector<double>> out(na, std::vector<double>(nr, 0.0));
+
+    for (size_t i = 0; i < na; ++i)
+        for (size_t j = 0; j < nr; ++j)
+            out[i][j] = 1.0 - fw[i][j];
+
+    return out;
+}
+
 class ContrastsProcessor
 {
 public:
     ContrastsProcessor(Image<float> &fractions, Image<float> &out_intra, Image<float> &out_extra, Image<float> &out_free, Image<float> &out_rfa, 
-        Image<float> &out_ad, Image<float> &out_rd, int rate, bool with_isotropic)
+        Image<float> &out_ad, Image<float> &out_rd, Image<float> &out_tc_rfa, int rate, bool with_isotropic)
         : fractions_image(fractions), intra_image(out_intra), extra_image(out_extra), 
-            free_image(out_free), rfa_image(out_rfa), ad_image(out_ad), rd_image(out_rd), rate(rate), with_isotropic(with_isotropic)
+            free_image(out_free), rfa_image(out_rfa), ad_image(out_ad), rd_image(out_rd), tc_rfa_image(out_tc_rfa), rate(rate), with_isotropic(with_isotropic)
     {
         // nothing
     }
@@ -293,13 +346,14 @@ public:
         auto rfam = rfa_map(ad_range, rd_range);
         auto ad = ad_map(ad_range, rd_range);
         auto rd = rd_map(ad_range, rd_range);
-
+        auto tc_rfa = non_free_water_contrast(ad_range, rd_range);
         const double intra_val = get_contrast(fs, ad_range, rd_range, intra);
         const double extra_val = get_contrast(fs, ad_range, rd_range, extra);
         const double free_val = get_contrast(fs, ad_range, rd_range, freew);
         const double rfa_val = get_contrast(fs, ad_range, rd_range, rfam);
         const double ad_val = get_contrast(fs, ad_range, rd_range, ad);
         const double rd_val = get_contrast(fs, ad_range, rd_range, rd);
+        const double tc_rfa_val = get_conditional_contrast(fs, ad_range, rd_range, rfam, tc_rfa);
 
         if (intra_image.valid())
         {
@@ -331,6 +385,11 @@ public:
             assign_pos_of(fracs, 0, 3).to(rd_image);
             rd_image.value() = static_cast<float>(rd_val);
         }
+        if (tc_rfa_image.valid())
+        {
+            assign_pos_of(fracs, 0, 3).to(tc_rfa_image);
+            tc_rfa_image.value() = static_cast<float>(tc_rfa_val);
+        }
     }
 
 private:
@@ -341,6 +400,7 @@ private:
     Image<float> rfa_image;
     Image<float> ad_image;
     Image<float> rd_image;
+    Image<float> tc_rfa_image;
     int rate = 10;
     bool with_isotropic = true;
 };
@@ -368,6 +428,7 @@ void run()
     auto opt_rfa = get_options("rfa");
     auto opt_ad = get_options("ad");
     auto opt_rd = get_options("rd");
+    auto opt_tc_rfa = get_options("tc_rfa");
 
     const bool write_intra = opt_intra.size() != 0;
     const bool write_extra = opt_extra.size() != 0;
@@ -375,6 +436,7 @@ void run()
     const bool write_rfa = opt_rfa.size() != 0;
     const bool write_ad = opt_ad.size() != 0;
     const bool write_rd = opt_rd.size() != 0;
+    const bool write_tc_rfa = opt_tc_rfa.size() != 0;
 
     auto mkdir_parent = [](const std::string &path){
         const auto pos = path.find_last_of('/');
@@ -396,6 +458,7 @@ void run()
     Image<float> rfa_img;
     Image<float> ad_img;
     Image<float> rd_img;
+    Image<float> tc_rfa_img;
 
     if (write_intra)
     {
@@ -434,6 +497,14 @@ void run()
         rd_img = Image<float>::create(rd_path, out_header);
     }
 
-    ContrastsProcessor proc(fractions, intra_img, extra_img, free_img, rfa_img, ad_img, rd_img, rate, with_iso);
+    if (write_tc_rfa)
+    {
+        const std::string tc_rfa_path = std::string(opt_tc_rfa[0][0]);
+        mkdir_parent(tc_rfa_path);
+        tc_rfa_img = Image<float>::create(tc_rfa_path, out_header);
+    }
+
+
+    ContrastsProcessor proc(fractions, intra_img, extra_img, free_img, rfa_img, ad_img, rd_img, tc_rfa_img, rate, with_iso);
     ThreadedLoop("mapping fractions -> contrasts", fractions, 0, 3).run(proc, fractions);
 }

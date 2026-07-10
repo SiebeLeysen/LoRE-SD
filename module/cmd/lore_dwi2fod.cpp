@@ -197,7 +197,7 @@ private:
 
 static Eigen::MatrixXd load_default_eval_dirs()
 {
-    return DWI::Directions::tesselation_469();
+    return DWI::Directions::tesselation_129();
 }
 
 void run()
