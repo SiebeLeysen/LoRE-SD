@@ -44,8 +44,6 @@ void usage()
      + Argument("size").type_integer(10)
     + Option("reg", "regularisation parameter (default: 1e-3)")
      + Argument("value").type_float(1e-3)
-    + Option("maxeval", "max evaluations for main optimizer (default: 400") 
-     + Argument("evals").type_integer(400) 
     + Option("init_obj_fun", "write initial objective function per voxel to an output image")
      + Argument("image").type_image_out()
     + Option("final_obj_fun", "write final objective function per voxel to an output image")
@@ -233,11 +231,6 @@ void run()
     if (opt.size())
         reg = to<double>(opt[0][0]);
 
-    int maxeval = 400;
-    opt = get_options("maxeval");
-    if (opt.size())
-        maxeval = to<int>(opt[0][0]);
-
     bool have_init_obj_fun = false;
     std::string init_obj_fun_path;
     opt = get_options("init_obj_fun");
@@ -282,7 +275,6 @@ void run()
 
     auto params = LoreSD::make_params(lmax, grid_size, reg, grad, eval_dirs, bvals, shell_volumes);
     // ALS removed; no als_iters parameter
-    params.maxeval = maxeval;
     params.init_obj_fun = have_init_obj_fun;
     params.final_obj_fun = have_final_obj_fun;
 

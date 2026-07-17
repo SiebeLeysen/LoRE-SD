@@ -1,51 +1,57 @@
-# LoRE-SD MRtrix external module
+# LoRE-SD MRtrix External Module
 
-LoRE-SD is a diffusion MRI spherical deconvolution method that estimates:
+LoRE-SD is a diffusion MRI spherical deconvolution method that jointly estimates:
 
-- a local spherical harmonic ODF,
-- a grid of Gaussian fraction weights over axial/radial diffusivities, and
-- a local, per-voxel response function.
+- a local spherical harmonic orientation distribution function (ODF),
+- a grid of Gaussian fraction weights over axial and radial diffusivities, and
+- a local per-voxel response function.
+
+The optimization is formulated as an alternating least-squares (ALS) procedure that alternates between:
+
+1. ODF estimation under non-negativity constraints.
+2. Gaussian fraction estimation under non-negativity constraints.
+
+Both subproblems are solved using ADMM (Alternating Direction Method of Multipliers), removing the need for external nonlinear optimization libraries.
 
 This module packages LoRE-SD as an MRtrix external module with two commands:
 
-- lore_dwi2fod: fit ODFs, fractions, and response functions from DWI
-- lore_fractions2contrasts: map the fitted fractions to biologically motivated contrasts
+- `lore_dwi2fod`: fit ODFs, fractions, and response functions from diffusion MRI data.
+- `lore_fractions2contrasts`: convert fitted fractions into biologically motivated contrast maps.
 
 ## Repository layout
 
-- [cmd/lore_dwi2fod.cpp](cmd/lore_dwi2fod.cpp) — LoRE-SD fitting command
-- [cmd/lore_fractions2contrasts.cpp](cmd/lore_fractions2contrasts.cpp) — contrast mapping command
-- [src/lore_sd/lore_sd.cpp](src/lore_sd/lore_sd.cpp) — core fitting and model construction
-- [src/lore_sd/lore_sd.h](src/lore_sd/lore_sd.h) — public API for the fitter
-- MRtrix predefined directions — built-in 300-direction electrostatic repulsion set used for non-negativity constraints
+- `cmd/lore_dwi2fod.cpp` — LoRE-SD fitting command
+- `cmd/lore_fractions2contrasts.cpp` — contrast mapping command
+- `src/lore_sd/lore_sd.cpp` — core model fitting and optimization
+- `src/lore_sd/lore_sd.h` — public API
 
 ## Build
 
-This module is built using the MRtrix build script.
+This module uses the standard MRtrix external module build system.
 
-This module depends on the nlopt library for nonlinear optimization.
-To build this module with NLopt, the NLopt library must be available and linked in the MRtrix configuration file, typically named `config` in the MRtrix repository.
-Add the following lines: 
+No additional third-party optimization libraries are required.
 
-```
-cpp_flags += [
-    '-I/path/to/nlopt/include'
-]
-
-ld_flags += [
-    '-L/path/to/nlopt/lib',
-    '-lnlopt',
-    '-Wl,-rpath,/path/to/nlopt/lib'
-]
-```
-
-
-From the repository root, create a symbolic link to the MRtrix build script if one is not already present, then run it:
+From the repository root, create a symbolic link to the MRtrix build script if one is not already present, then build the module:
 
 ```bash
 ln -s /path/to/mrtrix3/build build
 ./build
 ```
+
+## Method overview
+
+For each voxel:
+
+1. Shell-wise spherical harmonic representations of the diffusion signal are estimated.
+2. An initial isotropic Gaussian fraction distribution is constructed.
+3. An initial isotropic ODF is constructed.
+4. The algorithm alternates between:
+   - ODF estimation using constrained ADMM,
+   - Gaussian fraction estimation using non-negative ADMM,
+   - response function reconstruction.
+5. Iteration continues until the objective function stabilizes or the maximum number of ALS iterations (20) is reached.
+
+The ODF non-negativity constraints are enforced using a dense spherical sampling of directions obtained from the predefined MRtrix electrostatic repulsion set.
 
 ## Usage
 
@@ -66,39 +72,45 @@ lore_dwi2fod dwi.mif odf.mif fracs.mif response.mif \
 
 ### Inputs
 
-- DWI image in MRtrix format
-- optional mask via -mask
-- optional shell grouping via -python_shells
+- diffusion-weighted image (DWI) in MRtrix format
+- optional mask via `-mask`
+- optional shell grouping via `-python_shells`
 
 ### Outputs
 
-- odf.mif: spherical harmonic ODF coefficients
-- fracs.mif: Gaussian fraction grid with shape (ad, rd)
-- response.mif: per-shell response function in SH form
-- init_obj.mif: initial objective value per voxel
-- final_obj.mif: final objective value per voxel
+- `odf.mif`: spherical harmonic ODF coefficients
+- `fracs.mif`: Gaussian fraction grid over diffusivity space
+- `response.mif`: fitted response function coefficients
+- `init_obj.mif`: initial objective value per voxel (optional)
+- `final_obj.mif`: final objective value per voxel (optional)
 
 ### Main options
 
-- -lmax <int>: spherical harmonic order, default 8
-- -grid_size <int>: Da/Dr grid size, default 10
-- -reg <float>: regularisation strength, default 1e-3
-- -maxeval <int>: maximum iterations for the main optimizer, default 400
-- -python_shells: group shells by rounding b-values to the nearest 100
-- -init_obj_fun <image>: write initial objective values per voxel
-- -final_obj_fun <image>: write final objective values per voxel
+- `-lmax <int>`: maximum spherical harmonic order (default: 8)
+- `-grid_size <int>`: axial/radial diffusivity grid size (default: 10)
+- `-reg <float>`: response-function regularization strength (default: `1e-3`)
+- `-init_obj_fun <image>`: write initial objective values
+- `-final_obj_fun <image>`: write final objective values
 
-The non-negativity constraint directions use the built-in MRtrix predefined 300-direction electrostatic repulsion set.
-If you want a different set of directions, change the predefined set selected in the command wrapper.
+The ODF non-negativity constraints use the built-in MRtrix predefined 129-direction electrostatic repulsion set.
 
-### 2) Generate contrasts from fractions
+### Optimization diagnostics
 
-The contrast command converts the 5D fractions image into scalar maps that summarize different tissue regimes:
+Optional objective images can be exported for quality control:
+
+- `init_obj_fun`: objective value before optimization
+- `final_obj_fun`: objective value after optimization
+
+These outputs can be useful for identifying convergence failures or problematic voxels.
+
+## 2) Generate contrasts from fractions
+
+The contrast command converts the fitted diffusivity fractions into scalar contrast maps:
 
 - intra-axonal contrast
 - extra-axonal contrast
 - free-water contrast
-- RFA map
+- relative fractional anisotropy (RFA)
 
 Example:
 
@@ -112,36 +124,46 @@ lore_fractions2contrasts fracs.mif \
 
 Useful options:
 
-- -rate <int>: decay rate used for the intra-axonal weighting, default 10
-- -with_isotropic: include the isotropic line ad == rd in the valid region
+- `-rate <int>`: decay rate for intra-axonal weighting (default: 10)
+- `-with_isotropic`: include the isotropic line (`AD = RD`) in the valid region
 
 ## Contrast generation details
 
-The contrast mapping command interprets the fractions image as a grid over axial diffusivity (ad) and radial diffusivity (rd). It then computes:
+The fraction image is interpreted as a discretized diffusivity plane parameterized by:
 
-- free-water: a binary mask over high-diffusivity combinations,
-- intra-axonal: a decaying weighting over the valid ad >= rd region,
-- extra-axonal: the complement of free-water and intra-axonal contributions,
-- RFA: an anisotropy-style scalar derived from ad/rd.
+- axial diffusivity (AD)
+- radial diffusivity (RD)
+
+The following maps are then generated:
+
+- **free-water**: high-diffusivity isotropic regime
+- **intra-axonal**: highly anisotropic regime
+- **extra-axonal**: remaining non-free-water tissue regime
+- **RFA**: anisotropy-derived scalar computed from diffusivity differences
 
 ## Implementation notes
 
-- The ODF DC term is fixed to the isotropic value.
-- Shell-wise SH fits are used to build the initial response estimate.
-- Gaussian basis ordering is Da-major, then Dr-major, matching the Python implementation.
-- Objective values can be exported per voxel for QC.
-- Non-negativity directions are taken from the MRtrix predefined directions API.
+- The ODF DC coefficient is fixed to the isotropic value `1/sqrt(4π)`.
+- Shell-wise spherical harmonic fits are used as the signal representation.
+- Gaussian basis functions are defined on a discretized `(Da, Dr)` grid.
+- The Gaussian basis ordering is Da-major followed by Dr-major.
+- ODF estimation is performed using constrained ADMM.
+- Fraction estimation is performed using non-negative ADMM.
+- Response functions are reconstructed directly from the fitted fraction distribution.
+- Objective values can optionally be exported for quality control.
+- Non-negativity constraints use the MRtrix predefined electrostatic repulsion directions.
 
 ## Example workflow
 
 1. Build the module.
-2. Run lore_dwi2fod with a brain mask.
-3. Inspect odf.mif, fracs.mif, response.mif, and optional objective images.
-4. Run lore_fractions2contrasts to generate contrast maps from the fractions volume.
+2. Run `lore_dwi2fod` on a DWI dataset using a brain mask.
+3. Inspect:
+   - `odf.mif`
+   - `fracs.mif`
+   - `response.mif`
+   - optional objective maps.
+4. Generate contrast maps using `lore_fractions2contrasts`.
 
-## License
-
-A license file is not included in this repository snapshot.
 
 ## Author
 

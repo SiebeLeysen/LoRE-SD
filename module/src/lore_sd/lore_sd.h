@@ -13,15 +13,16 @@ namespace LoreSD {
 // diffusion image metadata.
 struct Params {
   int lmax;
-  double reg;
-  int grid_size = 7;
-  int maxeval = 400;
+  double reg = 1e-3;
+  int grid_size = 10;
   bool init_obj_fun = false;
   bool final_obj_fun = false;
   std::string debug_dump;
   std::vector<double> bvals;
   std::vector<double> da;
   std::vector<double> dr;
+  std::vector<int> valid_gaussian_indices;
+  int n_valid_gauss = 0;
   std::vector< Eigen::MatrixXd > gaussians_rh;
   std::vector<int> shell_sizes;
   std::vector<int> shell_ncoeff;
@@ -29,10 +30,9 @@ struct Params {
   std::vector< Eigen::MatrixXd > shell_pinvQ;
   std::vector< std::vector<size_t> > shell_volumes;
   Eigen::MatrixXd Q;
-  double beta = 20.0;
-  double lambda_pos = 10000.0;
-  // // Weight for a soft penalty on sampled ODF negativity. Zero = disabled.
-  // double odf_penalty = 0.0;
+  int max_admm_iter = 500;
+  int max_admm_iter_per_als = 500; // If > 0, limits ADMM iterations during intermediate ALS steps
+  
 };
 
 // Per-voxel outputs returned by the fitter.
