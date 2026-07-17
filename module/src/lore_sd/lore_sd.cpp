@@ -649,7 +649,7 @@ namespace LoreSD
           }
 
       }
-
+      
       // Save persistent fraction ADMM state across ALS iterations
       ws.prev_frac_x = x;
       ws.prev_frac_z = z;

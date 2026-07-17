@@ -30,8 +30,8 @@ struct Params {
   std::vector< Eigen::MatrixXd > shell_pinvQ;
   std::vector< std::vector<size_t> > shell_volumes;
   Eigen::MatrixXd Q;
-  int max_admm_iter = 500;
-  int max_admm_iter_per_als = 500; // If > 0, limits ADMM iterations during intermediate ALS steps
+  int max_admm_iter = 300;
+  int max_admm_iter_per_als = 60; // If > 0, limits ADMM iterations during intermediate ALS steps
   
 };
 
