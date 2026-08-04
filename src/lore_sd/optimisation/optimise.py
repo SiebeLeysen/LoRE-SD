@@ -72,12 +72,18 @@ def get_signal_decomposition(dwi, mask, grad, Da, Dr, reg=1e-3, Q=None, lmax=8, 
     with mp.Pool(cores, initializer=_init_decompose_worker, initargs=init_args) as pool:
         mapped = pool.imap(_decompose_voxel_from_globals, voxels, chunksize=chunksize)
         if verbose:
-            mapped = tqdm.tqdm(mapped, total=n_vox)
+            mapped = tqdm.tqdm(mapped, total=n_vox) 
         results = list(mapped)
 
     # Initialize arrays for ODFs, responses, and fiber fractions
-    odfs, init_odfs, responses, fs = map(np.zeros,
-                              [(mask_len, sh.n4l(lmax)), (mask_len, sh.n4l(lmax)), (mask_len, M, lmax // 2 + 1), (mask_len, len(Da), len(Dr))])
+    odfs, init_odfs, responses, fs, init_objs, final_objs = map(np.zeros,
+                              [(mask_len, sh.n4l(lmax)), (mask_len, sh.n4l(lmax)), (mask_len, M, lmax // 2 + 1), (mask_len, len(Da), len(Dr)), (mask_len,), (mask_len,)])
+    
+    for i, result in enumerate(results):
+        odfs[i], init_odfs[i], responses[i], fs[i] = result['odf'], result['init_odf'], result['response'], result['gaussian_fractions']
+        init_objs[i] = result['init_obj']
+        final_objs[i] = result['final_obj']
+
     # Simplified version of creating output arrays with the correct shape
     shapes = [
         mask.shape + (sh.n4l(lmax),),
@@ -183,17 +189,21 @@ def decompose_voxel(voxel, Da, Dr, grad, lmax, reg, Q, obj_fun, jac):
     init, bounds = get_init_and_bounds_from_csd(lmax, Da, Dr, gaussians, S, [constraints.non_negative_odf(Q)])
 
 
-    res = minimize(obj_fun, init, jac=jac, bounds=bounds, args= (S, gaussians, reg),
-                    constraints=[constraints.non_negative_odf(Q), constraints.sum_of_fractions_equals_one(lmax)],
-                    method='SLSQP', options={'ftol':1e-5, 'maxiter': 100000})
+    res = minimize(obj_fun, init, jac=jac, bounds=bounds, args=(S, gaussians, reg),
+                   constraints=[constraints.non_negative_odf(Q), constraints.sum_of_fractions_equals_one(lmax)],
+                   method='SLSQP', options={'ftol': 1e-5, 'maxiter': 100000})
     odf = res.x[:sh.n4l(lmax)]
     fs = res.x[sh.n4l(lmax):]
+    init_fs = init[sh.n4l(lmax):]
+
+    init_obj = obj_fun(init, S, gaussians, reg)
+    final_obj = res.fun
 
     # print(f'Init objective: {obj_fun(init, S, gaussians, reg):.4e}, Final objective: {res.fun:.4e}, Success: {res.success}, Message: {res.message}')
     response = to_response(fs, gaussians) / scale_factor
 
     return {'odf': odf, 'response': response, 'gaussian_fractions': np.squeeze(fs.reshape((len(Da), len(Dr)))),
-            'init_odf': init[:sh.n4l(lmax)], 'init_fs': init[sh.n4l(lmax):].reshape((len(Da), len(Dr)))}
+            'init_odf': init[:sh.n4l(lmax)], 'init_fs': init_fs.reshape((len(Da), len(Dr))), 'init_obj': init_obj, 'final_obj': final_obj}
 
 def get_init_and_bounds_from_csd(lmax, Da, Dr, scaled_gaussians, S, constraint_funs):
     """
