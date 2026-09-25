@@ -1,5 +1,5 @@
-#ifndef LORE_SD_MRTRIX3_LORE_SD_H
-#define LORE_SD_MRTRIX3_LORE_SD_H
+#ifndef LORE_SD_MRTRIX3_LORE_SD_MULTIDIM_H
+#define LORE_SD_MRTRIX3_LORE_SD_MULTIDIM_H
 
 #include <string>
 #include <vector>
@@ -14,7 +14,7 @@ namespace LoreSD {
 struct Params {
   int lmax;
   double reg = 4e-5;
-  int grid_size = 10;
+  int grid_size[3] = {10, 10, 10};
   bool init_obj_fun = false;
   bool final_obj_fun = false;
   std::string debug_dump;
@@ -44,6 +44,7 @@ struct Params {
 struct Result {
   std::vector<float> odf;
   std::vector<float> fracs;
+  std::vector<float> model_weights;
   std::vector<float> response;
   std::vector<float> predicted_signal;
   double f0 = 0.0;
@@ -52,29 +53,29 @@ struct Result {
 };
 
 // Build a reusable parameter bundle from the gradient table and shell layout.
-Params make_params(int lmax,
-                   int grid_size,
+Params make_params_multidim(int lmax,
+                   const int grid_size[3],
                    double reg,
                    const Eigen::MatrixXd& grad,
                    const Eigen::MatrixXd& eval_dirs,
                    const std::vector<double>& bvals,
-                   const std::vector< std::vector<size_t> >& shell_volumes);
-
-Params make_params_multidim(int lmax,
-                            const int grid_size[3],
-                            double reg,
-                            const Eigen::MatrixXd& grad,
-                            const Eigen::MatrixXd& eval_dirs,
-                            const std::vector<double>& bvals,
-                            const std::vector< std::vector<size_t> >& shell_volumes,
-                            const std::vector<double>& beta = {},
-                            const std::vector<double>& te = {},
-                            const std::vector<double>& t2 = {});
+                   const std::vector< std::vector<size_t> >& shell_volumes,
+                   const std::vector<double>& beta = {},
+                   const std::vector<double>& te = {});
 
 // Fit one voxel and return the LoRE-SD outputs.
-Result fit_voxel(const Eigen::VectorXd& dwi, const Params& params);
-
 Result fit_voxel_multidim(const Eigen::VectorXd& dwi, const Params& params);
+
+// Predict measurements for an arbitrary acquisition parameterization.
+void predict_measurements(const Eigen::MatrixXd& rf,
+                          const Eigen::VectorXd& odf,
+                          const Params& prediction_params,
+                          Eigen::VectorXd& predicted);
+
+// Convenience wrapper: predict from packed fit output response/odf.
+void predict_from_fit_result(const Result& fit_result,
+                             const Params& prediction_params,
+                             Eigen::VectorXd& predicted);
 
 }
 
