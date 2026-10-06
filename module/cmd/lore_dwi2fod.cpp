@@ -530,7 +530,7 @@ void run()
             throw Exception("lmax must be an even number");
     }
 
-    int grid_size[3] = {10,10,1};
+    int grid_size[3] = {10,10,10};
 
     opt = get_options("grid_da");
     if (opt.size())
@@ -585,6 +585,10 @@ void run()
     opt = get_options("te");
     if (opt.size())
         te_values = load_numeric_list_file(std::string(opt[0][0]));
+
+    // If only one unique TE_value is provided or no TE is provided, set grid_size[2] to 1
+    if (te_values.empty() || std::set<double>(te_values.begin(), te_values.end()).size() == 1)
+        grid_size[2] = 1;
 
     const bool have_recon_grad = get_options("recon_grad").size();
     std::string recon_bvec_path;
