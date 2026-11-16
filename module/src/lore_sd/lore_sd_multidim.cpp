@@ -55,7 +55,7 @@ namespace LoreSD
             return idx;
         }
 
-        Eigen::MatrixXd expcoefs(const Eigen::VectorXd &a, const Eigen::VectorXd &beta, int lmax)
+        Eigen::MatrixXd expcoefs(const Eigen::VectorXd &a, const Eigen::VectorXd &bdelta, int lmax)
         {
             const int ncoeff = lmax / 2 + 1;
             const int nx = 10 * ncoeff + 1;
@@ -77,7 +77,7 @@ namespace LoreSD
             Eigen::MatrixXd coefs(a.size(), ncoeff);
             for (int i = 0; i < a.size(); ++i)
             {
-                const Eigen::ArrayXd exponent = -a[i] * (beta[i] * x2_centered + 1.0 / 3.0);
+                const Eigen::ArrayXd exponent = -a[i] * (bdelta[i] * x2_centered + 1.0 / 3.0);
                 const Eigen::VectorXd y = exponent.exp().matrix();
                 coefs.row(i) = qr.solve(y).transpose();
             }
@@ -86,7 +86,7 @@ namespace LoreSD
         }
 
         Eigen::MatrixXd zhgaussian(const std::vector<double> &bvals,
-                                   const std::vector<double> &beta,
+                                   const std::vector<double> &bdelta,
                                    const std::vector<double> &te,
                                    double Da,
                                    double Dr,
@@ -98,9 +98,9 @@ namespace LoreSD
 
             const Eigen::VectorXd b_shell = Eigen::Map<const Eigen::VectorXd>(bvals.data(), n_shells);
             const Eigen::VectorXd a = b_shell.array() * (Da - Dr);
-            const Eigen::VectorXd beta_shell = Eigen::Map<const Eigen::VectorXd>(beta.data(), n_shells);
+            const Eigen::VectorXd bdelta_shell = Eigen::Map<const Eigen::VectorXd>(bdelta.data(), n_shells);
             const Eigen::VectorXd te_shell = Eigen::Map<const Eigen::VectorXd>(te.data(), n_shells);
-            const Eigen::MatrixXd expc = expcoefs(a, beta_shell, lmax);
+            const Eigen::MatrixXd expc = expcoefs(a, bdelta_shell, lmax);
 
             Eigen::VectorXd scale(ncoeff);
             for (int l = 0, col = 0; l <= lmax; l += 2, ++col)
@@ -192,7 +192,7 @@ namespace LoreSD
                     for (double t2 : params.t2)
                     {
                         const Eigen::MatrixXd zh =
-                            zhgaussian(params.bvals, params.beta, params.te, da, dr, t2, params.lmax);
+                            zhgaussian(params.bvals, params.bdelta, params.te, da, dr, t2, params.lmax);
                         for (int s = 0; s < n_shells; ++s)
                         {
                             gauss_zh.block(idx, s * ncoeff, 1, ncoeff) = zh.row(s);
@@ -500,26 +500,12 @@ namespace LoreSD
         return v.cwiseMax(0.0);
     }
 
-    static Eigen::VectorXd init_fractions_isotropic(const Workspace &ws, double total_mass, const Params &params)
+    static Eigen::VectorXd init_fractions_uniform(const Workspace &ws, double total_mass)
     {
         const int n_valid_gauss = ws.n_valid_gauss;
-        Eigen::VectorXd fs_init =
-            Eigen::VectorXd::Constant(
-                n_valid_gauss,
-                total_mass / std::max(1, n_valid_gauss));
-
-        // Set anisotropic fractions to 0
-        for (int k = 0; k < n_valid_gauss; ++k)
-        {
-            const AtomIndex atom = ws.valid_atoms[k];
-            const double da = params.da[atom.ida];
-            const double dr = params.dr[atom.idr];
-            if (da > dr || da == 0.0)
-            {
-                fs_init[k] = 0.0;
-            }
-        }
-        return fs_init;
+        if (n_valid_gauss == 0)
+            throw std::invalid_argument("fraction initialization requires at least one valid Gaussian");
+        return Eigen::VectorXd::Constant(n_valid_gauss, total_mass / n_valid_gauss);
     }
 
     // Solves the constrained ODF subproblem via ADMM:
@@ -943,7 +929,7 @@ namespace LoreSD
         }
         else
         {
-            warm = init_fractions_isotropic(ws, 10000.0, params);
+            warm = init_fractions_uniform(ws, 10000.0);
         }
 
         const Eigen::VectorXd solve_result = solve_fractions_admm(AtA, Atb, warm, ws, .001, max_iter, 1e-4, 1.6);
@@ -1010,7 +996,7 @@ namespace LoreSD
                                 const Eigen::MatrixXd &eval_dirs,
                                 const std::vector<double> &bvals,
                                 const std::vector<std::vector<size_t>> &shell_volumes,
-                                const std::vector<double> &beta,
+                                const std::vector<double> &bdelta,
                                 const std::vector<double> &te)
     {
         Params params;
@@ -1022,33 +1008,33 @@ namespace LoreSD
         const size_t n_shells_input = shell_volumes.size();
         const size_t n_volumes = static_cast<size_t>(grad.rows());
 
-        if (beta.empty())
+        if (bdelta.empty())
         {
-            params.beta.assign(params.bvals.size(), 1.0);
+            params.bdelta.assign(params.bvals.size(), 1.0);
         }
-        else if (beta.size() == params.bvals.size())
+        else if (bdelta.size() == params.bvals.size())
         {
-            params.beta = beta;
+            params.bdelta = bdelta;
         }
-        else if (beta.size() == n_volumes)
+        else if (bdelta.size() == n_volumes)
         {
-            params.beta.assign(n_shells_input, 1.0);
+            params.bdelta.assign(n_shells_input, 1.0);
             for (size_t s = 0; s < n_shells_input; ++s)
             {
                 const auto &idx = shell_volumes[s];
-                double ref = beta[idx.front()];
+                double ref = bdelta[idx.front()];
                 for (size_t i = 0; i < idx.size(); ++i)
                 {
-                    if (std::abs(beta[idx[i]] - ref) > 1e-6)
+                    if (std::abs(bdelta[idx[i]] - ref) > 1e-6)
                         throw std::runtime_error(
-                            "shell contains multiple beta values");
+                            "shell contains multiple bdelta values");
                 }
-                params.beta[s] = ref;
+                params.bdelta[s] = ref;
             }
         }
         else
         {
-            throw std::invalid_argument("beta must be empty, per-shell, or per-volume");
+            throw std::invalid_argument("bdelta must be empty, per-shell, or per-volume");
         }
 
         // No TE provided means T2 contribution is disabled, i.e. exp(-TE/T2) = 1.
@@ -1081,8 +1067,8 @@ namespace LoreSD
             throw std::invalid_argument("te must be empty, per-shell, or per-volume");
         }
 
-        if (params.beta.size() != params.bvals.size())
-            throw std::invalid_argument("beta size must match bvals size");
+        if (params.bdelta.size() != params.bvals.size())
+            throw std::invalid_argument("bdelta size must match bvals size");
         if (params.te.size() != params.bvals.size())
             throw std::invalid_argument("te size must match bvals size");
 
@@ -1157,7 +1143,7 @@ namespace LoreSD
             int nn = 1;
             if (!vols.empty())
             {
-                if (bvals[s] > 10.0 && std::abs(params.beta[s]) > 1e-6)
+                if (bvals[s] > 10.0 && std::abs(params.bdelta[s]) > 1e-6)
                 {
                     for (int l = 0; l <= lmax; l += 2)
                     {
@@ -1259,8 +1245,7 @@ namespace LoreSD
         pack_measurements(dwi, params, ws.d);
         ws.d /= scale;
 
-        Eigen::VectorXd fs_init = init_fractions_isotropic(ws, 1, params);
-        ws.prev_frac = fs_init;
+        Eigen::VectorXd fs_init = init_fractions_uniform(ws, 1.0);
 
         ws.rf.setZero();
         for (int k = 0; k < n_valid_gauss; ++k)
@@ -1283,37 +1268,41 @@ namespace LoreSD
         }
 
         // Reconstruct the signal and find the appropriate scaling of the fractions to match signal intensity
-        Eigen::VectorXd init_pred = Eigen::VectorXd::Zero(static_cast<int>(dwi.size()));
-
+        Eigen::VectorXd init_pred;
         predict_measurements_impl(ws.rf, Eigen::Map<const Eigen::VectorXd>(ws.x0.data(), n_sh), params, init_pred);
-        // First find the measurements corresponding to b=0
-        std::vector<int> b0_indices;
-        for (size_t i = 0; i < dwi.size(); ++i)
+
+        constexpr double b0_tol = 50.0;
+        size_t n_b0_measurements = 0;
+        double measured_b0_sum = 0.0;
+        double predicted_b0_sum = 0.0;
+        for (size_t s = 0; s < params.shell_volumes.size(); ++s)
         {
-            if (params.bvals[i] == 0)
-                b0_indices.push_back(static_cast<int>(i));
-        }
-        Eigen::VectorXd b0_signal(b0_indices.size());
-        for (size_t i = 0; i < b0_indices.size(); ++i)
-        {
-            b0_signal[i] = dwi[b0_indices[i]];
-        }
-        Eigen::VectorXd pred_b0_signal(b0_indices.size());
-        for (size_t i = 0; i < b0_indices.size(); ++i)
-        {
-            pred_b0_signal[i] = init_pred[b0_indices[i]];
-        }
-        
-        // Compute the scaling factor for the fractions based on the b=0 signal
-        double scale_factor = 1.0;
-        if (b0_signal.size() > 0)
-        {
-            scale_factor = b0_signal.mean() / pred_b0_signal.mean();
-            for (int k = 0; k < n_valid_gauss; ++k)
+            if (std::abs(params.bvals[s]) <= b0_tol)
             {
-                ws.x0[n_sh + k] *= scale_factor;
+                const int offset = ws.shell_offsets[s];
+                const int shell_size = params.shell_sizes[s];
+                n_b0_measurements += static_cast<size_t>(shell_size);
+                measured_b0_sum += ws.d.segment(offset, shell_size).sum();
+                predicted_b0_sum += init_pred.segment(offset, shell_size).sum();
             }
         }
+
+        const double scaling_denominator =
+            n_b0_measurements > 0 ? predicted_b0_sum : init_pred.squaredNorm();
+        if (!std::isfinite(scaling_denominator) || scaling_denominator <= 1e-12)
+            throw std::runtime_error("initial prediction cannot be scaled: zero or non-finite denominator");
+
+        const double scaling_numerator =
+            n_b0_measurements > 0 ? measured_b0_sum : init_pred.dot(ws.d);
+        const double scale_factor = scaling_numerator / scaling_denominator;
+        if (!std::isfinite(scale_factor))
+            throw std::runtime_error("initial scaling factor is non-finite");
+
+        for (int k = 0; k < n_valid_gauss; ++k)
+            ws.x0[n_sh + k] *= scale_factor;
+
+        rebuild_rf_from_fractions(ws.rf, ws.x0, ws, params);
+        ws.prev_frac = Eigen::Map<const Eigen::VectorXd>(ws.x0.data() + n_sh, n_valid_gauss);
 
         const bool need_objectives = params.init_obj_fun || params.final_obj_fun;
 

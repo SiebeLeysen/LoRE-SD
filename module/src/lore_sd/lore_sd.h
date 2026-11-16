@@ -19,7 +19,7 @@ struct Params {
   bool final_obj_fun = false;
   std::string debug_dump;
   std::vector<double> bvals;
-  std::vector<double> beta;
+  std::vector<double> bdelta;
   std::vector<double> te;
   std::vector<double> t2;
   std::vector<double> da;
@@ -67,7 +67,7 @@ Params make_params_multidim(int lmax,
                             const Eigen::MatrixXd& eval_dirs,
                             const std::vector<double>& bvals,
                             const std::vector< std::vector<size_t> >& shell_volumes,
-                            const std::vector<double>& beta = {},
+                            const std::vector<double>& bdelta = {},
                             const std::vector<double>& te = {},
                             const std::vector<double>& t2 = {});
 

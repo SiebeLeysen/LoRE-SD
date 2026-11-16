@@ -11,6 +11,7 @@
 #include <vector>
 #include <limits>
 #include <memory>
+#include <utility>
 
 
 #include "command.h"
@@ -18,7 +19,9 @@
 #include "image.h"
 #include "algo/threaded_loop.h"
 #include "dwi/gradient.h"
+#include "file/nifti_utils.h"
 #include "dwi/directions/predefined.h"
+#include "math/math.h"
 #include "math/SH.h"
 #include "metadata/phase_encoding.h"
 #include "stride.h"
@@ -33,7 +36,7 @@ namespace
     struct ShellInfo
     {
         double b = 0.0;
-        double beta = 1.0;
+        double bdelta = 1.0;
         double te = 0.0;
         std::vector<size_t> volumes;
     };
@@ -49,6 +52,34 @@ namespace
         for (size_t i = 0; i < bvals.size(); ++i)
             bvals[i] = grad(static_cast<Eigen::Index>(i), 3);
         return bvals;
+    }
+
+    bool same_gradient_table(const Eigen::MatrixXd& lhs, const Eigen::MatrixXd& rhs)
+    {
+        if (lhs.rows() != rhs.rows() || lhs.cols() < 4 || rhs.cols() < 4)
+            return false;
+
+        for (Eigen::Index row = 0; row < lhs.rows(); ++row)
+        {
+            if (std::abs(lhs(row, 3) - rhs(row, 3)) > 1e-3)
+                return false;
+
+            Eigen::Vector3d lhs_direction = lhs.block<1, 3>(row, 0).transpose();
+            Eigen::Vector3d rhs_direction = rhs.block<1, 3>(row, 0).transpose();
+            const double lhs_norm = lhs_direction.norm();
+            const double rhs_norm = rhs_direction.norm();
+            if (lhs_norm == 0.0 || rhs_norm == 0.0)
+            {
+                if (lhs_norm != rhs_norm)
+                    return false;
+            }
+            else if ((lhs_direction / lhs_norm - rhs_direction / rhs_norm).norm() > 1e-6)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     std::vector< std::vector<size_t> > group_by_b(const std::vector<double>& bvals, double b_tol)
@@ -102,11 +133,11 @@ namespace
         throw Exception(name + " input must contain either one value per volume or one value per b-shell");
     }
 
-    std::vector<ShellInfo> group_shells_b_beta_te(const std::vector<double>& bvals,
-                                                  const std::vector<double>& beta,
+    std::vector<ShellInfo> group_shells_b_bdelta_te(const std::vector<double>& bvals,
+                                                  const std::vector<double>& bdelta,
                                                   const std::vector<double>& te,
                                                   double b_tol,
-                                                  double beta_tol,
+                                                  double bdelta_tol,
                                                   double te_tol)
     {
         std::vector<ShellInfo> shells;
@@ -116,7 +147,7 @@ namespace
             for (auto& sh : shells)
             {
                 if (close_enough(bvals[v], sh.b, b_tol) &&
-                    close_enough(beta[v], sh.beta, beta_tol) &&
+                    close_enough(bdelta[v], sh.bdelta, bdelta_tol) &&
                     close_enough(te[v], sh.te, te_tol))
                 {
                     sh.volumes.push_back(v);
@@ -129,7 +160,7 @@ namespace
             {
                 ShellInfo sh;
                 sh.b = bvals[v];
-                sh.beta = beta[v];
+                sh.bdelta = bdelta[v];
                 sh.te = te[v];
                 sh.volumes.push_back(v);
                 shells.push_back(sh);
@@ -165,78 +196,113 @@ static std::vector<double> load_numeric_list_file(const std::string& path)
     return values;
 }
 
-static std::vector< std::vector<double> > load_numeric_matrix_file(const std::string& path)
+static Eigen::MatrixXd load_fsl_grad(const Header& header,
+                                     const std::string& bvec_path,
+                                     const std::string& bval_path)
 {
-    std::ifstream in(path.c_str());
-    if (!in)
-        throw Exception("cannot open numeric input file: " + path);
+    Eigen::MatrixXd bvals = load_matrix<>(bval_path);
+    Eigen::MatrixXd bvecs = load_matrix<>(bvec_path);
+    if (bvals.rows() != 1 && bvals.cols() == 1)
+        bvals.transposeInPlace();
+    if (bvecs.rows() != 3 && bvecs.cols() == 3)
+        bvecs.transposeInPlace();
+    if (bvals.rows() != 1 || bvecs.rows() != 3 || bvals.cols() != bvecs.cols())
+        throw Exception("invalid FSL bvecs/bvals pair (\"" + bvec_path + "\", \"" + bval_path + "\")");
+    const size_t num_volumes = header.ndim() < 4 ? 1 : header.size(3);
+    if (size_t(bvals.cols()) != num_volumes)
+        throw Exception("FSL bvecs/bvals have " + str(bvals.cols()) + " entries but the image has " + str(num_volumes) + " volumes");
 
-    std::vector< std::vector<double> > rows;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        const size_t comment = line.find('#');
-        if (comment != std::string::npos)
-            line = line.substr(0, comment);
-
-        std::istringstream iss(line);
-        std::vector<double> row;
-        double v;
-        while (iss >> v)
-            row.push_back(v);
-
-        if (!row.empty())
-            rows.push_back(row);
+    Axes::permutations_type order;
+    const auto transform = File::NIfTI::adjust_transform(header, order);
+    if (transform.linear().determinant() > 0.0)
+        bvecs.row(0) *= -1.0;
+    Eigen::MatrixXd grad(bvecs.cols(), 4);
+    grad.leftCols<3>().transpose() = transform.linear() * bvecs;
+    grad.col(3) = bvals.row(0);
+    for (ssize_t i = 0; i < grad.rows(); ++i) {
+        const double n = grad.row(i).head<3>().norm();
+        if (n > 0.0)
+            grad.row(i).head<3>() /= n;
     }
-
-    if (rows.empty())
-        throw Exception("numeric input file is empty: " + path);
-
-    return rows;
+    return grad;
 }
 
-static Eigen::MatrixXd load_recon_grad_from_fsl(const std::string& bvec_path,
-                                                const std::string& bval_path)
+struct GradientTable
 {
-    const auto bvec_rows = load_numeric_matrix_file(bvec_path);
-    const auto bvals = load_numeric_list_file(bval_path);
-    const size_t n_volumes = bvals.size();
+    Eigen::MatrixXd grad;
+    std::vector<double> bdelta;
+    std::vector<double> te;
+};
 
-    Eigen::MatrixXd grad(static_cast<Eigen::Index>(n_volumes), 4);
-
-    if (bvec_rows.size() == 3)
+// Loads an MRtrix-format gradient table with 4 [X Y Z b], 5 [X Y Z b bdelta]
+// or 6 [X Y Z b bdelta TE] columns. If match_header_volumes is false, the
+// table may define a different number of volumes than the header.
+static GradientTable load_grad_table(const Header& header,
+                                     const std::string& path,
+                                     const std::string& description,
+                                     bool match_header_volumes)
+{
+    Eigen::MatrixXd table;
+    try
     {
-        const size_t n_cols = bvec_rows[0].size();
-        if (bvec_rows[1].size() != n_cols || bvec_rows[2].size() != n_cols)
-            throw Exception("recon_bvec rows must have the same number of columns");
-        if (n_cols != n_volumes)
-            throw Exception("recon_bvec and recon_bval must describe the same number of volumes");
-
-        for (size_t v = 0; v < n_volumes; ++v)
-        {
-            grad(static_cast<Eigen::Index>(v), 0) = bvec_rows[0][v];
-            grad(static_cast<Eigen::Index>(v), 1) = bvec_rows[1][v];
-            grad(static_cast<Eigen::Index>(v), 2) = bvec_rows[2][v];
-            grad(static_cast<Eigen::Index>(v), 3) = bvals[v];
-        }
-        return grad;
+        table = load_matrix<double>(path);
+    }
+    catch (Exception& e)
+    {
+        throw Exception(e, "Unable to import " + description + " \"" + path + "\"");
     }
 
-    if (bvec_rows.size() == n_volumes)
+    if (table.cols() < 4 || table.cols() > 6)
+        throw Exception(description + " must have 4 columns [X Y Z b], 5 columns [X Y Z b bdelta] "
+                        "or 6 columns [X Y Z b bdelta TE]");
+    if (!table.allFinite())
+        throw Exception(description + " contains non-finite values: " + path);
+
+    try
     {
-        for (size_t v = 0; v < n_volumes; ++v)
+        Header check_header(header);
+        if (!match_header_volumes)
         {
-            if (bvec_rows[v].size() != 3)
-                throw Exception("recon_bvec must be either a 3xN FSL file or an Nx3 table");
-            grad(static_cast<Eigen::Index>(v), 0) = bvec_rows[v][0];
-            grad(static_cast<Eigen::Index>(v), 1) = bvec_rows[v][1];
-            grad(static_cast<Eigen::Index>(v), 2) = bvec_rows[v][2];
-            grad(static_cast<Eigen::Index>(v), 3) = bvals[v];
+            check_header.ndim() = 4;
+            check_header.size(3) = static_cast<int>(table.rows());
         }
-        return grad;
+        DWI::check_DW_scheme(check_header, table);
+    }
+    catch (Exception& e)
+    {
+        throw Exception(e, "invalid " + description + " \"" + path + "\"");
     }
 
-    throw Exception("recon_bvec must be either a 3xN FSL file or an Nx3 table matching recon_bval");
+    const auto scaling = DWI::get_cmdline_bvalue_scaling_behaviour();
+    double max_log_scaling_factor = 0.0;
+    for (Eigen::Index row = 0; row < table.rows(); ++row)
+    {
+        const double norm_squared = table.block<1, 3>(row, 0).squaredNorm();
+        if (norm_squared > 0.0)
+            max_log_scaling_factor = std::max(max_log_scaling_factor, std::abs(std::log(norm_squared)));
+    }
+    const bool scale_bvalues =
+        (max_log_scaling_factor > 0.01 && scaling == DWI::BValueScalingBehaviour::Auto) ||
+        scaling == DWI::BValueScalingBehaviour::UserOn;
+
+    GradientTable result;
+    result.grad = table.leftCols(4);
+    for (Eigen::Index row = 0; row < result.grad.rows(); ++row)
+    {
+        const double norm_squared = result.grad.block<1, 3>(row, 0).squaredNorm();
+        if (norm_squared == 0.0)
+            continue;
+        if (scale_bvalues)
+            result.grad(row, 3) *= norm_squared;
+        result.grad.block<1, 3>(row, 0) /= std::sqrt(norm_squared);
+    }
+
+    if (table.cols() >= 5)
+        result.bdelta.assign(table.col(4).data(), table.col(4).data() + table.rows());
+    if (table.cols() == 6)
+        result.te.assign(table.col(5).data(), table.col(5).data() + table.rows());
+
+    return result;
 }
 
 void usage()
@@ -252,7 +318,18 @@ void usage()
     +Argument("dwi", "the input diffusion-weighted image").type_image_in() + Argument("odf", "output ODF image").type_image_out() + Argument("fracs", "output LoRE-SD fractions image").type_image_out() + Argument("response", "output LoRE-SD response image").type_image_out();
 
     OPTIONS
-    +DWI::GradImportOptions()
+    + OptionGroup("DW gradient table import options")
+    + Option("grad", "provide the diffusion gradient table used in the acquisition in MRtrix/scanner coordinates, "
+                     "as a text file with one row per volume containing [X Y Z b], optionally followed by "
+                     "bdelta and TE columns ([X Y Z b bdelta] or [X Y Z b bdelta TE]). "
+                     "Overrides any gradient table present in the image header.")
+        + Argument("file").type_file_in()
+    + Option("fslgrad", "provide the diffusion gradient table used in the acquisition in FSL bvecs/bvals format. "
+                        "Overrides any gradient table present in the image header.")
+        + Argument("bvecs").type_file_in()
+        + Argument("bvals").type_file_in()
+    + DWI::bvalue_scaling_option
+    + OptionGroup("LoRE-SD options")
     + Option("mask", "only perform computation within the specified binary brain mask image")
      + Argument("image").type_image_in()
     + Option("lmax", "maximum spherical harmonic order (default: 8)")
@@ -265,9 +342,11 @@ void usage()
      + Argument("size").type_integer(1)
     + Option("reg", "regularisation parameter (default: 4e-5)")
      + Argument("value").type_float(4e-5)
-    + Option("beta", "path to beta values file (one value per shell or per volume)")
+    + Option("bdelta", "path to bdelta values file (one value per shell or per volume); "
+                       "cannot be combined with a -grad table that contains a bdelta column")
      + Argument("file").type_file_in()
-    + Option("te", "path to TE values file (one value per shell or per volume)")
+    + Option("te", "path to TE values file (one value per shell or per volume); "
+                   "cannot be combined with a -grad table that contains a TE column")
      + Argument("file").type_file_in()
     + Option("init_obj_fun", "write initial objective function per voxel to an output image")
      + Argument("image").type_image_out()
@@ -275,16 +354,10 @@ void usage()
      + Argument("image").type_image_out()
     + Option("predicted_signal", "write the DWI signal predicted by LoRE-SD to an output image")
         + Argument("image").type_image_out()
-    + Option("recon_grad", "enable reconstruction onto a different acquisition scheme")
-    + Option("recon_bvec", "path to reconstruction bvec file (required when recon_grad is used)")
+    + Option("recon_grad_mrtrix", "reconstruct using a gradient table in MRtrix/scanner coordinates "
+                                  "([X Y Z b], optionally followed by bdelta, or bdelta and TE columns)")
         + Argument("file").type_file_in()
-    + Option("recon_bval", "path to reconstruction bval file (required when recon_grad is used)")
-        + Argument("file").type_file_in()
-    + Option("recon_beta", "path to reconstruction beta values file (optional, one value per shell or per volume)")
-        + Argument("file").type_file_in()
-    + Option("recon_te", "path to reconstruction TE values file (optional, one value per shell or per volume)")
-        + Argument("file").type_file_in()
-    + Option("dwi_recon", "write reconstructed DWI signal on the reconstruction scheme (required when recon_grad is used)")
+    + Option("dwi_recon", "write reconstructed DWI signal on the reconstruction scheme (required when a reconstruction gradient table is used)")
         + Argument("image").type_image_out()
     + Stride::Options;
 }
@@ -507,7 +580,26 @@ static Eigen::MatrixXd load_default_eval_dirs()
 void run()
 {
     auto header_in = Header::open(argument[0]);
-    auto grad = DWI::get_DW_scheme(header_in);
+    Eigen::MatrixXd grad;
+    std::vector<double> grad_bdelta_values;
+    std::vector<double> grad_te_values;
+    {
+        auto grad_opt = App::get_options("grad");
+        auto fsl_opt = App::get_options("fslgrad");
+        if (grad_opt.size() && fsl_opt.size())
+            throw Exception("Diffusion gradient table can be provided using either -grad or -fslgrad option, but NOT both");
+        if (grad_opt.size())
+        {
+            auto table = load_grad_table(header_in, std::string(grad_opt[0][0]), "gradient table", true);
+            grad = std::move(table.grad);
+            grad_bdelta_values = std::move(table.bdelta);
+            grad_te_values = std::move(table.te);
+        }
+        else if (fsl_opt.size())
+            grad = load_fsl_grad(header_in, fsl_opt[0][0], fsl_opt[0][1]);
+        else
+            grad = DWI::get_DW_scheme(header_in);
+    }
     if (grad.cols() < 4)
         throw Exception("DW scheme must have at least 4 columns (gx gy gz b)");
 
@@ -576,73 +668,62 @@ void run()
         predicted_signal_path = std::string(opt[0][0]);
     }
 
-    std::vector<double> beta_values;
-    opt = get_options("beta");
+    std::vector<double> bdelta_values = std::move(grad_bdelta_values);
+    opt = get_options("bdelta");
     if (opt.size())
-        beta_values = load_numeric_list_file(std::string(opt[0][0]));
+    {
+        if (!bdelta_values.empty())
+            throw Exception("bdelta values provided both in the -grad table and via -bdelta; use only one");
+        bdelta_values = load_numeric_list_file(std::string(opt[0][0]));
+    }
 
-    std::vector<double> te_values;
+    std::vector<double> te_values = std::move(grad_te_values);
     opt = get_options("te");
     if (opt.size())
+    {
+        if (!te_values.empty())
+            throw Exception("TE values provided both in the -grad table and via -te; use only one");
         te_values = load_numeric_list_file(std::string(opt[0][0]));
+    }
 
     // If only one unique TE_value is provided or no TE is provided, set grid_size[2] to 1
     if (te_values.empty() || std::set<double>(te_values.begin(), te_values.end()).size() == 1)
         grid_size[2] = 1;
 
-    const bool have_recon_grad = get_options("recon_grad").size();
-    std::string recon_bvec_path;
-    std::string recon_bval_path;
+    const auto recon_grad_mrtrix_opt = get_options("recon_grad_mrtrix");
+    const bool have_recon_grad = recon_grad_mrtrix_opt.size();
     std::string dwi_recon_path;
-    std::vector<double> recon_beta_values;
+    std::vector<double> recon_bdelta_values;
     std::vector<double> recon_te_values;
 
     if (have_recon_grad)
     {
-        auto recon_bvec_opt = get_options("recon_bvec");
-        auto recon_bval_opt = get_options("recon_bval");
         auto dwi_recon_opt = get_options("dwi_recon");
-
-        if (!recon_bvec_opt.size())
-            throw Exception("recon_bvec is required when recon_grad is used");
-        if (!recon_bval_opt.size())
-            throw Exception("recon_bval is required when recon_grad is used");
         if (!dwi_recon_opt.size())
-            throw Exception("dwi_recon is required when recon_grad is used");
-
-        recon_bvec_path = std::string(recon_bvec_opt[0][0]);
-        recon_bval_path = std::string(recon_bval_opt[0][0]);
+            throw Exception("dwi_recon is required when recon_grad_mrtrix is used");
         dwi_recon_path = std::string(dwi_recon_opt[0][0]);
-
-        opt = get_options("recon_beta");
-        if (opt.size())
-            recon_beta_values = load_numeric_list_file(std::string(opt[0][0]));
-
-        opt = get_options("recon_te");
-        if (opt.size())
-            recon_te_values = load_numeric_list_file(std::string(opt[0][0]));
     }
 
     std::vector<double> bvals;
-    std::vector<double> shell_beta;
+    std::vector<double> shell_bdelta;
     std::vector<double> shell_te;
     std::vector<std::vector<size_t>> shell_volumes;
 
     const auto b_per_vol = bvals_per_volume(grad);
     const auto b_groups = group_by_b(b_per_vol, 50.0);
-    const auto beta_per_vol = expand_protocol_values(beta_values, b_groups, b_per_vol.size(), 1.0, "beta");
+    const auto bdelta_per_vol = expand_protocol_values(bdelta_values, b_groups, b_per_vol.size(), 1.0, "bdelta");
     const auto te_per_vol = expand_protocol_values(te_values, b_groups, b_per_vol.size(), 0.0, "te");
 
-    const auto shells = group_shells_b_beta_te(b_per_vol, beta_per_vol, te_per_vol, 50.0, 1e-2, 1e-2);
+    const auto shells = group_shells_b_bdelta_te(b_per_vol, bdelta_per_vol, te_per_vol, 50.0, 1e-2, 1e-2);
 
     bvals.reserve(shells.size());
-    shell_beta.reserve(shells.size());
+    shell_bdelta.reserve(shells.size());
     shell_te.reserve(shells.size());
     shell_volumes.reserve(shells.size());
     for (const auto& sh : shells)
     {
         bvals.push_back(sh.b);
-        shell_beta.push_back(sh.beta);
+        shell_bdelta.push_back(sh.bdelta);
         shell_te.push_back(sh.te);
         shell_volumes.push_back(sh.volumes);
     }
@@ -651,7 +732,7 @@ void run()
             std::to_string(shells.size()) + " shells: ");
     for (size_t i = 0; i < bvals.size(); ++i)
         CONSOLE("  Shell " + std::to_string(i) + ": b=" + std::to_string(bvals[i]) +
-                ", beta=" + std::to_string(shell_beta[i]) + ", te=" + std::to_string(shell_te[i]) +
+                ", bdelta=" + std::to_string(shell_bdelta[i]) + ", TE=" + std::to_string(shell_te[i]) +
                 ", volumes=" + std::to_string(shell_volumes[i].size()));
 
     auto params = LoreSD::make_params_multidim(
@@ -662,7 +743,7 @@ void run()
         eval_dirs,
         bvals,
         shell_volumes,
-        shell_beta,
+        shell_bdelta,
         shell_te);
     // ALS removed; no als_iters parameter
     params.init_obj_fun = have_init_obj_fun;
@@ -672,29 +753,39 @@ void run()
     Eigen::MatrixXd recon_grad;
     if (have_recon_grad)
     {
-        recon_grad = load_recon_grad_from_fsl(recon_bvec_path, recon_bval_path);
+        auto table = load_grad_table(header_in, std::string(recon_grad_mrtrix_opt[0][0]), "reconstruction gradient table", false);
+        recon_grad = std::move(table.grad);
+        recon_bdelta_values = std::move(table.bdelta);
+        recon_te_values = std::move(table.te);
 
         std::vector<double> recon_bvals;
-        std::vector<double> recon_shell_beta;
+        std::vector<double> recon_shell_bdelta;
         std::vector<double> recon_shell_te;
         std::vector<std::vector<size_t>> recon_shell_volumes;
 
         const auto recon_b_per_vol = bvals_per_volume(recon_grad);
         const auto recon_b_groups = group_by_b(recon_b_per_vol, 50.0);
-        const auto recon_beta_per_vol = expand_protocol_values(recon_beta_values, recon_b_groups, recon_b_per_vol.size(), 1.0, "recon_beta");
-        const auto recon_te_per_vol = expand_protocol_values(recon_te_values, recon_b_groups, recon_b_per_vol.size(), 0.0, "recon_te");
+        auto recon_bdelta_per_vol = expand_protocol_values(recon_bdelta_values, recon_b_groups, recon_b_per_vol.size(), 1.0, "recon_bdelta");
+        auto recon_te_per_vol = expand_protocol_values(recon_te_values, recon_b_groups, recon_b_per_vol.size(), 0.0, "recon_te");
+        if (same_gradient_table(grad, recon_grad))
+        {
+            if (recon_bdelta_values.empty())
+                recon_bdelta_per_vol = bdelta_per_vol;
+            if (recon_te_values.empty())
+                recon_te_per_vol = te_per_vol;
+        }
 
         const auto recon_shells =
-            group_shells_b_beta_te(recon_b_per_vol, recon_beta_per_vol, recon_te_per_vol, 50.0, 1e-2, 1e-2);
+            group_shells_b_bdelta_te(recon_b_per_vol, recon_bdelta_per_vol, recon_te_per_vol, 50.0, 1e-2, 1e-2);
 
         recon_bvals.reserve(recon_shells.size());
-        recon_shell_beta.reserve(recon_shells.size());
+        recon_shell_bdelta.reserve(recon_shells.size());
         recon_shell_te.reserve(recon_shells.size());
         recon_shell_volumes.reserve(recon_shells.size());
         for (const auto &sh : recon_shells)
         {
             recon_bvals.push_back(sh.b);
-            recon_shell_beta.push_back(sh.beta);
+            recon_shell_bdelta.push_back(sh.bdelta);
             recon_shell_te.push_back(sh.te);
             recon_shell_volumes.push_back(sh.volumes);
         }
@@ -708,7 +799,7 @@ void run()
                 eval_dirs,
                 recon_bvals,
                 recon_shell_volumes,
-                recon_shell_beta,
+                recon_shell_bdelta,
                 recon_shell_te)));
     }
 
@@ -722,6 +813,7 @@ void run()
 
     header_out.ndim() = 4;
     header_out.size(3) = MR::Math::SH::NforL(lmax);
+    Stride::set_from_command_line(header_out, Stride::contiguous_along_axis(3, header_out));
     auto odf = Image<float>::create(argument[1], header_out);
 
     Header fracs_header(header_out);
@@ -729,12 +821,14 @@ void run()
     fracs_header.size(3) = grid_size[0];  // ad dimension
     fracs_header.size(4) = grid_size[1];  // rd dimension
     fracs_header.size(5) = grid_size[2];  // t2 dimension
+    Stride::set_from_command_line(fracs_header, Stride::contiguous_along_axis(3, fracs_header));
     auto fracs = Image<float>::create(argument[2], fracs_header);
 
     Header response_header(header_out);
     response_header.ndim() = 5;
     response_header.size(3) = bvals.size();
     response_header.size(4) = lmax / 2 + 1;
+    Stride::set_from_command_line(response_header, Stride::contiguous_along_axis(3, response_header));
     auto response = Image<float>::create(argument[3], response_header);
 
     Image<float> init_obj_fun;
@@ -766,6 +860,7 @@ void run()
         predicted_header.datatype() = DataType::Float32;
         predicted_header.datatype().set_byte_order_native();
         auto path = predicted_signal_path;
+        Stride::set_from_command_line(predicted_header, Stride::contiguous_along_axis(3, predicted_header));
         predicted_signal = Image<float>::create(path, predicted_header);
     }
 
@@ -779,6 +874,7 @@ void run()
         recon_header.size(3) = recon_grad.rows();
         DWI::stash_DW_scheme(recon_header, recon_grad);
         Metadata::PhaseEncoding::clear_scheme(recon_header.keyval());
+        Stride::set_from_command_line(recon_header, Stride::contiguous_along_axis(3, recon_header));
         dwi_recon = Image<float>::create(dwi_recon_path, recon_header);
     }
 

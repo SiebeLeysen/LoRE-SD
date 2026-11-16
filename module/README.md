@@ -43,7 +43,10 @@ ln -s /path/to/mrtrix3/build build
 For each voxel:
 
 1. Shell-wise spherical harmonic representations of the diffusion signal are estimated.
-2. An initial isotropic Gaussian fraction distribution is constructed.
+2. Initial fractions are distributed uniformly over all valid Gaussian atoms,
+   including anisotropic atoms so that the initial response retains directional
+   sensitivity. Their total mass is fitted to the normalized b=0 measurements
+   (|b| <= 50), or to all normalized measurements if no b=0 shell is available.
 3. An initial isotropic ODF is constructed.
 4. The algorithm alternates between:
    - ODF estimation using constrained ADMM,
@@ -92,6 +95,11 @@ lore_dwi2fod dwi.mif odf.mif fracs.mif response.mif \
 - `-init_obj_fun <image>`: write initial objective values
 - `-final_obj_fun <image>`: write final objective values
 
+### Acquisition protocol and reconstruction
+
+- `-grad <file>`: input gradient table in MRtrix/scanner coordinates with 4 (`X Y Z b`), 5 (`X Y Z b bdelta`) or 6 (`X Y Z b bdelta TE`) columns. Alternatively, use `-fslgrad <bvecs> <bvals>` or the gradient table stored in the image header.
+- `-bdelta <file>` and `-te <file>`: provide b-tensor shape (`bdelta`) and echo-time values, with one value per b-shell or per volume. These cannot be combined with the corresponding column in a `-grad` table.
+- `-recon_grad_mrtrix <file> -dwi_recon <image>`: reconstruct on a separate acquisition scheme using a gradient table directly in MRtrix/scanner coordinates, in the same 4-, 5- or 6-column format as `-grad`. If protocol columns are omitted, `bdelta` and `TE` default to 1 and 0, respectively, except that matching input gradients inherit the input protocol.
 The ODF non-negativity constraints use the built-in MRtrix predefined 129-direction electrostatic repulsion set.
 
 ### Optimization diagnostics
