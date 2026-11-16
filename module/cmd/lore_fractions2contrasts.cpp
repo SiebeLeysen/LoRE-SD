@@ -30,7 +30,7 @@ void usage()
     +"Compute intra-axonal, extra-axonal and free-water contrasts from a LoRE-SD fractions image.";
 
         ARGUMENTS
-        + Argument("fractions", "input fractions image (5D: x,y,z,ad,rd)").type_image_in();
+        + Argument("fractions", "input fractions image (5D: x,y,z,ad,rd, or 6D with a T2 axis)").type_image_in();
 
         OPTIONS
         + Option("intra_axonal", "write intra-axonal contrast to file") + Argument("file").type_file_out()
@@ -323,6 +323,7 @@ public:
         // read dimensions
         const size_t na = static_cast<size_t>(fracs.size(3));
         const size_t nr = static_cast<size_t>(fracs.size(4));
+        const size_t nt2 = fracs.ndim() == 6 ? static_cast<size_t>(fracs.size(5)) : 1;
 
         std::vector<float> fs;
         fs.reserve(na * nr);
@@ -332,7 +333,16 @@ public:
             for (size_t j = 0; j < nr; ++j)
             {
                 fracs.index(4) = static_cast<int>(j);
-                fs.push_back(fracs.value());
+                double fraction_sum = 0.0;
+                for (size_t k = 0; k < nt2; ++k)
+                {
+                    if (fracs.ndim() == 6)
+                    {
+                        fracs.index(5) = static_cast<int>(k);
+                    }
+                    fraction_sum += fracs.value();
+                }
+                fs.push_back(static_cast<float>(fraction_sum));
             }
         }
 
@@ -410,8 +420,8 @@ void run()
     auto header_in = Header::open(argument[0]);
     auto fractions = header_in.get_image<float>().with_direct_io(3);
 
-    if (fractions.ndim() != 5)
-        throw Exception("Input fractions image must be 5D (x,y,z,ad,rd)");
+    if (fractions.ndim() != 5 && fractions.ndim() != 6)
+        throw Exception("Input fractions image must be 5D (x,y,z,ad,rd) or 6D (x,y,z,ad,rd,t2)");
 
     auto opt = get_options("rate");
     int rate = 10;

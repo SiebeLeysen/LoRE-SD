@@ -1,177 +1,144 @@
 # LoRE-SD MRtrix External Module
 
-LoRE-SD is a diffusion MRI spherical deconvolution method that jointly estimates:
+This MRtrix3 external module provides a multidimensional LoRE-SD model. It
+jointly estimates a spherical harmonic orientation distribution function
+(ODF), a local response function, and non-negative weights over a grid of
+axial diffusivity (AD), radial diffusivity (RD), and, when supported by the
+acquisition, T2 values.
 
-- a local spherical harmonic orientation distribution function (ODF),
-- a grid of Gaussian fraction weights over axial and radial diffusivities, and
-- a local per-voxel response function.
+The fitting command alternates between constrained ODF estimation and
+non-negative fraction estimation, using ADMM for both subproblems.
 
-The optimization is formulated as an alternating least-squares (ALS) procedure that alternates between:
+## Commands and source
 
-1. ODF estimation under non-negativity constraints.
-2. Gaussian fraction estimation under non-negativity constraints.
-
-Both subproblems are solved using ADMM (Alternating Direction Method of Multipliers), removing the need for external nonlinear optimization libraries.
-
-This module packages LoRE-SD as an MRtrix external module with two commands:
-
-- `lore_dwi2fod`: fit ODFs, fractions, and response functions from diffusion MRI data.
-- `lore_fractions2contrasts`: convert fitted fractions into biologically motivated contrast maps.
-
-## Repository layout
-
-- `cmd/lore_dwi2fod.cpp` — LoRE-SD fitting command
-- `cmd/lore_fractions2contrasts.cpp` — contrast mapping command
-- `src/lore_sd/lore_sd.cpp` — core model fitting and optimization
-- `src/lore_sd/lore_sd.h` — public API
+- `lore_dwi2fod`: fit an ODF, fractions, and response function from a DWI.
+- `lore_fractions2contrasts`: map fitted fractions to scalar contrast images.
+- `cmd/lore_dwi2fod.cpp` and `src/lore_sd/lore_sd_multidim.cpp`: fitting command
+  and multidimensional model implementation.
+- `cmd/lore_fractions2contrasts.cpp`: contrast mapping, including reduction
+  across the optional T2 axis.
 
 ## Build
 
-This module uses the standard MRtrix external module build system.
-
-No additional third-party optimization libraries are required.
-
-From the repository root, create a symbolic link to the MRtrix build script if one is not already present, then build the module:
+This module uses the standard MRtrix external-module build system. From the
+`module` directory, link the MRtrix build script if needed and build:
 
 ```bash
 ln -s /path/to/mrtrix3/build build
 ./build
 ```
 
-## Method overview
-
-For each voxel:
-
-1. Shell-wise spherical harmonic representations of the diffusion signal are estimated.
-2. Initial fractions are distributed uniformly over all valid Gaussian atoms,
-   including anisotropic atoms so that the initial response retains directional
-   sensitivity. Their total mass is fitted to the normalized b=0 measurements
-   (|b| <= 50), or to all normalized measurements if no b=0 shell is available.
-3. An initial isotropic ODF is constructed.
-4. The algorithm alternates between:
-   - ODF estimation using constrained ADMM,
-   - Gaussian fraction estimation using non-negative ADMM,
-   - response function reconstruction.
-5. Iteration continues until the objective function stabilizes or the maximum number of ALS iterations (20) is reached.
-
-The ODF non-negativity constraints are enforced using a dense spherical sampling of directions obtained from the predefined MRtrix electrostatic repulsion set.
-
-## Usage
-
-### 1) Fit LoRE-SD from DWI
-
-Basic example:
+## Fit LoRE-SD from a DWI
 
 ```bash
 lore_dwi2fod dwi.mif odf.mif fracs.mif response.mif \
   -mask mask.mif \
   -lmax 8 \
-  -grid_size 10 \
-  -reg 1e-3 \
-  -python_shells \
-  -init_obj_fun init_obj.mif \
-  -final_obj_fun final_obj.mif
+  -grid_da 10 \
+  -grid_dr 10 \
+  -grid_t2 10 \
+  -reg 4e-5
 ```
 
-### Inputs
-
-- diffusion-weighted image (DWI) in MRtrix format
-- optional mask via `-mask`
-- optional shell grouping via `-python_shells`
+The input image must have a diffusion gradient scheme in its header, or receive
+one using `-grad` or `-fslgrad`.
 
 ### Outputs
 
-- `odf.mif`: spherical harmonic ODF coefficients
-- `fracs.mif`: Gaussian fraction grid over diffusivity space
-- `response.mif`: fitted response function coefficients
-- `init_obj.mif`: initial objective value per voxel (optional)
-- `final_obj.mif`: final objective value per voxel (optional)
+- `odf.mif`: spherical harmonic ODF coefficients.
+- `fracs.mif`: fraction weights on the AD x RD x T2 grid. This is a 6D image
+  with dimensions `(x,y,z,AD,RD,T2)`; the T2 axis has length one when T2 fitting
+  is disabled. Values are ordered AD-major, then RD, then T2.
+- `response.mif`: response coefficients by acquisition shell and even SH
+  order.
+- Optional `-init_obj_fun <image>` and `-final_obj_fun <image>`: initial and
+  final objective values per voxel.
+- Optional `-predicted_signal <image>`: fitted signal on the input acquisition
+  scheme.
+- Optional `-recon_grad_mrtrix <file> -dwi_recon <image>`: predicted signal on
+  a separate acquisition scheme.
 
 ### Main options
 
-- `-lmax <int>`: maximum spherical harmonic order (default: 8)
-- `-grid_size <int>`: axial/radial diffusivity grid size (default: 10)
-- `-reg <float>`: response-function regularization strength (default: `1e-3`)
-- `-init_obj_fun <image>`: write initial objective values
-- `-final_obj_fun <image>`: write final objective values
+- `-mask <image>`: process only voxels in this binary mask.
+- `-lmax <int>`: maximum even spherical harmonic order (default: `8`).
+- `-grid_da <int>`: number of AD grid points (default: `10`, minimum: `2`).
+- `-grid_dr <int>`: number of RD grid points (default: `10`, minimum: `1`).
+- `-grid_t2 <int>`: number of T2 grid points (default: `10` when multiple echo
+  times are present; minimum: `1`).
+- `-reg <float>`: response-function regularization strength (default: `4e-5`).
 
-### Acquisition protocol and reconstruction
+AD and RD are linearly sampled from 0 to `3.3e-3` mm²/s. T2 fitting is
+automatically disabled if no TE is supplied or all measurements have the same
+TE, in which case the T2 axis has length one regardless of `-grid_t2`. For a
+For T2 grid sizes of two or more, the grid starts at 30 ms and includes a 1500
+ms endpoint. For three or more points, intermediate grid points span 30–170 ms.
 
-- `-grad <file>`: input gradient table in MRtrix/scanner coordinates with 4 (`X Y Z b`), 5 (`X Y Z b bdelta`) or 6 (`X Y Z b bdelta TE`) columns. Alternatively, use `-fslgrad <bvecs> <bvals>` or the gradient table stored in the image header.
-- `-bdelta <file>` and `-te <file>`: provide b-tensor shape (`bdelta`) and echo-time values, with one value per b-shell or per volume. These cannot be combined with the corresponding column in a `-grad` table.
-- `-recon_grad_mrtrix <file> -dwi_recon <image>`: reconstruct on a separate acquisition scheme using a gradient table directly in MRtrix/scanner coordinates, in the same 4-, 5- or 6-column format as `-grad`. If protocol columns are omitted, `bdelta` and `TE` default to 1 and 0, respectively, except that matching input gradients inherit the input protocol.
-The ODF non-negativity constraints use the built-in MRtrix predefined 129-direction electrostatic repulsion set.
+### Gradient and acquisition options
 
-### Optimization diagnostics
+- `-grad <file>`: gradient table in MRtrix/scanner coordinates, one row per
+  volume: `X Y Z b`, optionally followed by `bdelta` and `TE` columns (5- or
+  6-column table).
+- `-fslgrad <bvecs> <bvals>`: use FSL-format gradient files instead of `-grad`.
+- `-bdelta <file>` and `-te <file>`: provide b-tensor shape and echo time
+  values. Each file may contain one value per b-shell or per volume. They
+  cannot be used with a `-grad` table that already contains the corresponding
+  column. TE values are in milliseconds.
+- `-recon_grad_mrtrix <file> -dwi_recon <image>`: predict on another MRtrix
+  gradient table, with the same 4-, 5-, or 6-column format as `-grad`. The
+  reconstruction table's optional protocol columns default to `bdelta=1` and
+  `TE=0`; if the gradient scheme matches the input, omitted protocol values
+  inherit the input values.
 
-Optional objective images can be exported for quality control:
+The command groups measurements into shells using b-value, bdelta, and TE.
+When no explicit gradients are provided, the scheme stored in the input image
+header is used.
 
-- `init_obj_fun`: objective value before optimization
-- `final_obj_fun`: objective value after optimization
-
-These outputs can be useful for identifying convergence failures or problematic voxels.
-
-## 2) Generate contrasts from fractions
-
-The contrast command converts the fitted diffusivity fractions into scalar contrast maps:
-
-- intra-axonal contrast
-- extra-axonal contrast
-- free-water contrast
-- relative fractional anisotropy (RFA)
-
-Example:
+## Generate contrasts from fractions
 
 ```bash
 lore_fractions2contrasts fracs.mif \
   -intra_axonal intra.mif \
   -extra_axonal extra.mif \
   -free_water free.mif \
-  -rfa rfa.mif
+  -rfa rfa.mif \
+  -ad ad.mif \
+  -rd rd.mif \
+  -tc_rfa tc_rfa.mif
 ```
 
-Useful options:
+Select one or more output maps by supplying their options. The command accepts
+legacy 5D `(x,y,z,AD,RD)` fractions and 6D `(x,y,z,AD,RD,T2)` fractions. For
+6D input it sums fractions over T2 before calculating each contrast, so all T2
+components contribute to the corresponding AD/RD map.
 
-- `-rate <int>`: decay rate for intra-axonal weighting (default: 10)
-- `-with_isotropic`: include the isotropic line (`AD = RD`) in the valid region
+Optional controls:
 
-## Contrast generation details
+- `-rate <int>`: decay rate for intra-axonal weighting (default: `10`).
+- `-with_isotropic`: include the isotropic line (`AD = RD`) in the valid region.
 
-The fraction image is interpreted as a discretized diffusivity plane parameterized by:
+The generated maps include intra-axonal, extra-axonal, and free-water
+fractions, relative fractional anisotropy (RFA), AD, RD, and tissue-conditioned
+RFA (`-tc_rfa`).
 
-- axial diffusivity (AD)
-- radial diffusivity (RD)
+## Method notes
 
-The following maps are then generated:
-
-- **free-water**: high-diffusivity isotropic regime
-- **intra-axonal**: highly anisotropic regime
-- **extra-axonal**: remaining non-free-water tissue regime
-- **RFA**: anisotropy-derived scalar computed from diffusivity differences
-
-## Implementation notes
-
-- The ODF DC coefficient is fixed to the isotropic value `1/sqrt(4π)`.
-- Shell-wise spherical harmonic fits are used as the signal representation.
-- Gaussian basis functions are defined on a discretized `(Da, Dr)` grid.
-- The Gaussian basis ordering is Da-major followed by Dr-major.
-- ODF estimation is performed using constrained ADMM.
-- Fraction estimation is performed using non-negative ADMM.
-- Response functions are reconstructed directly from the fitted fraction distribution.
-- Objective values can optionally be exported for quality control.
-- Non-negativity constraints use the MRtrix predefined electrostatic repulsion directions.
+- Shell-wise spherical harmonic signal representations are used.
+- Initial fractions include valid anisotropic atoms; the initial response is
+  scaled using b=0 measurements when available.
+- The ODF DC coefficient is fixed to `1/sqrt(4π)`.
+- ODF non-negativity is enforced using MRtrix's predefined 129-direction
+  electrostatic repulsion set.
+- The AD/RD/T2 basis is stored AD-major, then RD, then T2; atoms with `AD < RD`
+  are excluded.
+- The fitting loop performs up to 20 alternating optimization steps.
 
 ## Example workflow
 
 1. Build the module.
-2. Run `lore_dwi2fod` on a DWI dataset using a brain mask.
-3. Inspect:
-   - `odf.mif`
-   - `fracs.mif`
-   - `response.mif`
-   - optional objective maps.
-4. Generate contrast maps using `lore_fractions2contrasts`.
-
+2. Run `lore_dwi2fod` with a gradient scheme and mask.
+3. Inspect the ODF, fraction, and response images (and optional diagnostics).
+4. Run `lore_fractions2contrasts` on the 6D fraction image.
 
 ## Author
 

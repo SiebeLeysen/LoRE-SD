@@ -339,7 +339,7 @@ void usage()
     + Option("grid_dr", "Dr grid size")
       + Argument("size").type_integer(10)
     + Option("grid_t2", "T2 grid size")
-     + Argument("size").type_integer(1)
+     + Argument("size").type_integer(10)
     + Option("reg", "regularisation parameter (default: 4e-5)")
      + Argument("value").type_float(4e-5)
     + Option("bdelta", "path to bdelta values file (one value per shell or per volume); "
@@ -636,7 +636,7 @@ void run()
     if (opt.size())
         grid_size[2] = to<int>(opt[0][0]);
 
-    double reg = 5e-5;
+    double reg = 4e-5;
     opt = get_options("reg");
     if (opt.size())
         reg = to<double>(opt[0][0]);

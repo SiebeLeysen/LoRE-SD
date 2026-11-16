@@ -1001,6 +1001,14 @@ namespace LoreSD
     {
         Params params;
         params.lmax = lmax;
+        if (lmax < 0 || lmax % 2 != 0)
+            throw std::invalid_argument("lmax must be a non-negative even number");
+        if (grid_size[0] < 2)
+            throw std::invalid_argument("grid_da must be at least 2");
+        if (grid_size[1] < 1)
+            throw std::invalid_argument("grid_dr must be at least 1");
+        if (grid_size[2] < 1)
+            throw std::invalid_argument("grid_t2 must be at least 1");
         for (int i = 0; i < 3; ++i)
             params.grid_size[i] = grid_size[i];
         params.reg = reg;
@@ -1110,7 +1118,8 @@ namespace LoreSD
         }
         else
         {
-            const double step = 140 / static_cast<double>(grid_size[2] - 2);
+            const double step =
+                140.0 / static_cast<double>(std::max(1, grid_size[2] - 2));
             for (int i = 0; i < grid_size[2] - 1; ++i)
             {
                 params.t2[i] = 30.0 + step * static_cast<double>(i);
