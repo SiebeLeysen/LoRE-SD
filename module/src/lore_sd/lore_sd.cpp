@@ -26,7 +26,7 @@ namespace LoreSD
       const int ncoeff = lmax / 2 + 1;
       const int nx = 10 * ncoeff + 1;
       Eigen::VectorXd x = Eigen::VectorXd::LinSpaced(nx, -1.0, 1.0);
-      x = x.tail(nx - 1);
+      x = x.tail(nx - 1).eval();
 
       Eigen::MatrixXd P(x.size(), ncoeff);
       for (int i = 0; i < x.size(); ++i)
